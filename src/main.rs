@@ -1,4 +1,6 @@
 mod keys;
+mod stores;
+mod stores_wrappers;
 
 fn main() {
     println!("Khimy - chat chiffre de bout en bout");
@@ -11,8 +13,6 @@ fn main() {
             println!("     Signed Pre-Key   : id={}", u32::from(keys.signed_pre_key.0));
             println!("     Kyber Pre-Key    : id={}", u32::from(keys.kyber_pre_key.0));
             println!("     One-Time Pre-Keys: {} generees", keys.pre_keys.len());
-            println!();
-            println!("Prochaine etape : implementer session.rs (X3DH + Double Ratchet).");
         }
         Err(e) => {
             eprintln!("[ERREUR] {:?}", e);
