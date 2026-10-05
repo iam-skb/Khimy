@@ -1,6 +1,7 @@
 mod client;
 mod keys;
 mod network;
+mod persist;
 mod relay;
 mod session;
 mod stores;
@@ -111,6 +112,9 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
     let keys = keys::load_or_generate_keys(name).expect("keys");
     let store = make_store(&keys);
 
+    // Charge les sessions et identités persistées depuis le dernier lancement
+    persist::load_all(&store, name);
+
     let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
     let dest_address = ProtocolAddress::new(dest.to_string(), DeviceId::new(1).unwrap());
 
@@ -144,6 +148,10 @@ e)))?;
     };
 
     let mut rng = rand::rng();
+
+    // Sauvegarde l'identité distante AVANT de wrapper dans Arc<Mutex>
+    persist::save_all(&store, name);
+
     let store = Arc::new(Mutex::new(store));
     {
         let mut s = store.lock().unwrap();
@@ -153,6 +161,12 @@ e)))?;
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
     }
     println!("[{}] session etablie avec {}", name, dest);
+
+    // Persiste la session qui vient d'être créée
+    {
+        let s = store.lock().unwrap();
+        persist::save_all(&s, name);
+    }
 
     let mut stream_reader = client.stream.try_clone()?;
     let listen_store = Arc::clone(&store);
@@ -176,7 +190,11 @@ DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
                         match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload,
 &mut rng) {
-                            Ok(text) => println!("[{}] << {} : {}", listen_name, from, text),
+                            Ok(text) => {
+                                println!("[{}] << {} : {}", listen_name, from, text);
+                                // Persiste la session après chaque message (ratchet avance)
+                                persist::save_all(&s, &listen_name);
+                            }
                             Err(e) => eprintln!("[{}] erreur: {:?}", listen_name, e),
                         }
                     }
@@ -189,7 +207,6 @@ DeviceId::new(1).unwrap());
         }
     });
 
-    // Petite pause pour laisser le temps a l'autre d'envoyer son PreKeySignalMessage
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
