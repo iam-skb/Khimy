@@ -22,11 +22,12 @@ fn usage() -> ! {
          \tkhimy relay <addr>\n\
          \tkhimy listen <addr> <nom>\n\
          \tkhimy connect <addr> <nom> <dest>\n\
+         \tkhimy chat <addr> <nom> <dest>\n\
          \n\
          Exemple:\n\
          \tkhimy relay 127.0.0.1:9000\n\
-         \tkhimy listen 127.0.0.1:9000 bob\n\
-         \tkhimy connect 127.0.0.1:9000 alice bob"
+         \tkhimy chat 127.0.0.1:9000 alice bob\n\
+         \tkhimy chat 127.0.0.1:9000 bob alice"
     );
     std::process::exit(2);
 }
@@ -46,6 +47,10 @@ fn main() -> io::Result<()> {
         "connect" => {
             if args.len() < 5 { usage(); }
             run_connect(&args[2], &args[3], &args[4])
+        }
+        "chat" => {
+            if args.len() < 5 { usage(); }
+            run_chat(&args[2], &args[3], &args[4])
         }
         _ => usage(),
     }
@@ -185,7 +190,6 @@ fn run_connect(addr: &str, name: &str, dest: &str) -> io::Result<()> {
     }
     println!("[{}] session etablie avec {}", name, dest);
 
-    // --- Thread d'écoute en arrière-plan ---
     let mut stream_reader = client.stream.try_clone()?;
     let listen_store = Arc::clone(&store);
     let listen_name = name.to_string();
@@ -220,7 +224,111 @@ text),
         }
     });
 
-    // --- Boucle d'envoi ---
+    println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() { continue; }
+
+        let ct = {
+            let mut s = store.lock().unwrap();
+            futures::executor::block_on(session::encrypt_message(
+                &mut s, &my_address, &dest_address, line.as_bytes(), &mut rng,
+            ))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?
+        };
+
+        let bytes = ct.serialize();
+        client.send_ciphertext(dest, &bytes)?;
+        println!("[{}] -> {} ({} octets)", name, dest, bytes.len());
+    }
+
+    Ok(())
+}
+
+fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
+    let keys = keys::generate_all_keys().expect("keys");
+    let store = make_store(&keys);
+
+    let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
+    let dest_address = ProtocolAddress::new(dest.to_string(), DeviceId::new(1).unwrap());
+
+    let mut client = Client::connect(addr, name)?;
+    println!("[{}] connecte a {}", name, addr);
+
+    let bundle = build_bundle(&keys);
+    let bundle_bytes = serialize_bundle(&bundle)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+    client.publish_bundle(&bundle_bytes)?;
+    println!("[{}] bundle publie", name);
+
+    let bob_bundle = loop {
+        client.request_bundle(dest)?;
+        let (kind, from, payload) = client.recv()?;
+        match kind {
+            KIND_BUNDLE => {
+                let bundle = deserialize_bundle(&payload)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", 
+e)))?;
+                println!("[{}] bundle de {} recu", name, from);
+                break bundle;
+            }
+            KIND_CIPHERTEXT => {
+                eprintln!("[{}] message recu avant bundle, ignore", name);
+            }
+            _ => {
+                eprintln!("[{}] kind inconnu: 0x{:02x}", name, kind);
+            }
+        }
+    };
+
+    let mut rng = rand::rng();
+    let store = Arc::new(Mutex::new(store));
+    {
+        let mut s = store.lock().unwrap();
+        futures::executor::block_on(session::establish_session(
+            &mut s, &my_address, &dest_address, &bob_bundle, &mut rng,
+        ))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+    }
+    println!("[{}] session etablie avec {}", name, dest);
+
+    let mut stream_reader = client.stream.try_clone()?;
+    let listen_store = Arc::clone(&store);
+    let listen_name = name.to_string();
+    let listen_my_address = my_address.clone();
+
+    thread::spawn(move || {
+        let mut rng = rand::rng();
+        loop {
+            match network::recv_frame(&mut stream_reader) {
+                Ok(frame) => {
+                    let (kind, from, payload) = match network::decode_envelope(&frame) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if kind == KIND_BUNDLE {
+                        println!("[{}] bundle recu de {}", listen_name, from);
+                    } else if kind == KIND_CIPHERTEXT {
+                        let from_addr = ProtocolAddress::new(from.clone(), 
+DeviceId::new(1).unwrap());
+                        let mut s = listen_store.lock().unwrap();
+                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, 
+&mut rng) {
+                            Ok(text) => println!("\n[{}] << {} : {}", listen_name, from, 
+text),
+                            Err(e) => eprintln!("[{}] erreur: {:?}", listen_name, e),
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("[{}] thread d'ecoute termine", listen_name);
+                    break;
+                }
+            }
+        }
+    });
+
     println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
