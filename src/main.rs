@@ -129,7 +129,7 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
         match kind {
             KIND_BUNDLE => {
                 let bundle = deserialize_bundle(&payload)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", 
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}",
 e)))?;
                 println!("[{}] bundle de {} recu", name, from);
                 break bundle;
@@ -171,13 +171,12 @@ e)))?;
                     if kind == KIND_BUNDLE {
                         println!("[{}] bundle recu de {}", listen_name, from);
                     } else if kind == KIND_CIPHERTEXT {
-                        let from_addr = ProtocolAddress::new(from.clone(), 
+                        let from_addr = ProtocolAddress::new(from.clone(),
 DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
-                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, 
+                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload,
 &mut rng) {
-                            Ok(text) => println!("\n[{}] << {} : {}", listen_name, from, 
-text),
+                            Ok(text) => println!("[{}] << {} : {}", listen_name, from, text),
                             Err(e) => eprintln!("[{}] erreur: {:?}", listen_name, e),
                         }
                     }
