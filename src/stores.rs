@@ -7,10 +7,6 @@ use libsignal_protocol::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::stores_wrappers::{
-    IdentityStoreView, KyberPreKeyStoreView, PreKeyStoreView, SessionStoreView,
-    SignedPreKeyStoreView,
-};
 
 /// Conteneur en mémoire pour tous les stores de Signal.
 pub struct InMemoryStores {
