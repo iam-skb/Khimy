@@ -37,6 +37,17 @@ impl From<SignalProtocolError> for PersistError {
     }
 }
 
+impl std::fmt::Display for PersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersistError::Io(s) => write!(f, "io: {}", s),
+            PersistError::Signal(s) => write!(f, "signal: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for PersistError {}
+
 /// Renvoie le chemin du dossier ~/.khimy/<nom>/
 fn khimy_user_dir(name: &str) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
