@@ -37,12 +37,6 @@ impl From<SignalProtocolError> for PersistError {
     }
 }
 
-impl From<libsignal_protocol::curve::CurveError> for PersistError {
-    fn from(e: libsignal_protocol::curve::CurveError) -> Self {
-        PersistError::Signal(format!("curve: {:?}", e))
-    }
-}
-
 /// Renvoie le chemin du dossier ~/.khimy/<nom>/
 fn khimy_user_dir(name: &str) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
