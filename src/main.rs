@@ -329,6 +329,9 @@ text),
         }
     });
 
+    // Petite pause pour laisser le temps a l'autre d'envoyer son PreKeySignalMessage
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
     println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {

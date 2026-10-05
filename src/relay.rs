@@ -7,13 +7,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::network::{
-    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE, KIND_BUNDLE_REQUEST,
+    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE, 
+KIND_BUNDLE_REQUEST,
     KIND_CIPHERTEXT,
 };
 
 struct State {
     clients: HashMap<String, TcpStream>,
     bundles: HashMap<String, Vec<u8>>,
+    waiting: Vec<(String, String)>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -25,6 +27,7 @@ pub fn run_server(addr: &str) -> io::Result<()> {
     let state: Shared = Arc::new(Mutex::new(State {
         clients: HashMap::new(),
         bundles: HashMap::new(),
+        waiting: Vec::new(),
     }));
 
     for stream in listener.incoming() {
@@ -59,7 +62,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
         };
 
         let (kind, dest, payload) = decode_envelope(&frame)?;
-        println!("[relay] {} -> {} (kind=0x{:02x}, {} octets)", name, dest, kind, payload.len());
+        println!("[relay] {} -> {} (kind=0x{:02x}, {} octets)", name, dest, kind, 
+payload.len());
 
         match kind {
             KIND_BUNDLE_REQUEST => {
@@ -71,13 +75,36 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                         let _ = send_frame(w, &env);
                     }
                 } else {
-                    eprintln!("[relay] bundle inconnu: {}", dest);
+                    eprintln!("[relay] bundle inconnu: {}, on met en attente", dest);
+                    state.lock().unwrap().waiting.push((name.clone(), dest.clone()));
                 }
             }
 
             KIND_BUNDLE => {
                 state.lock().unwrap().bundles.insert(name.clone(), payload);
-                println!("[relay] bundle publie par {}", name);
+
+                let mut st = state.lock().unwrap();
+                let mut still_waiting = Vec::new();
+                let mut to_notify = Vec::new();
+
+                for (requester, target) in st.waiting.drain(..) {
+                    if target == name {
+                        to_notify.push(requester);
+                    } else {
+                        still_waiting.push((requester, target));
+                    }
+                }
+                st.waiting = still_waiting;
+
+                for requester in &to_notify {
+                    if let Some(bundle) = st.bundles.get(&name).cloned() {
+                        let env = encode_envelope(KIND_BUNDLE, &name, &bundle);
+                        if let Some(w) = st.clients.get_mut(requester) {
+                            let _ = send_frame(w, &env);
+                            println!("[relay] bundle de {} envoye a {}", name, requester);
+                        }
+                    }
+                }
             }
 
             KIND_CIPHERTEXT => {
