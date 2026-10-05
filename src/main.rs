@@ -8,6 +8,8 @@ mod stores_wrappers;
 
 use std::env;
 use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use client::Client;
 use libsignal_protocol::*;
@@ -84,8 +86,33 @@ fn build_bundle(keys: &keys::GeneratedKeys) -> PreKeyBundle {
     .expect("PreKeyBundle")
 }
 
+fn try_decrypt(
+    store: &mut InMemoryStores,
+    my_address: &ProtocolAddress,
+    from_addr: &ProtocolAddress,
+    payload: &[u8],
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
+) -> Result<String, SignalProtocolError> {
+    if let Ok(prekey) = PreKeySignalMessage::try_from(payload) {
+        if let Ok(plain) = futures::executor::block_on(session::decrypt_prekey_message(
+            store, my_address, from_addr, &prekey, rng,
+        )) {
+            return Ok(String::from_utf8_lossy(&plain).to_string());
+        }
+    }
+    if let Ok(signal) = SignalMessage::try_from(payload) {
+        let plain = futures::executor::block_on(session::decrypt_message(
+            store, my_address, from_addr, &signal, rng,
+        ))?;
+        return Ok(String::from_utf8_lossy(&plain).to_string());
+    }
+    Err(SignalProtocolError::InvalidMessage(
+        CiphertextMessageType::Whisper,
+        "message illisible".to_string(),
+    ))
+}
+
 fn run_listen(addr: &str, name: &str) -> io::Result<()> {
-    let mut rng = rand::rng();
     let keys = keys::generate_all_keys().expect("keys");
     let mut store = make_store(&keys);
 
@@ -96,51 +123,40 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
     let mut client = Client::connect(addr, name)?;
     client.publish_bundle(&bundle_bytes)?;
     println!("[{}] connecte a {}, bundle publie", name, addr);
+    println!("[{}] en attente de messages... (Ctrl-C pour quitter)", name);
 
     let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
+    let mut rng = rand::rng();
 
     loop {
-        let (kind, from, payload) = client.recv()?;
+        let (kind, from, payload) = match client.recv() {
+            Ok(v) => v,
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                eprintln!("[{}] relay ferme", name);
+                break;
+            }
+            Err(e) => return Err(e),
+        };
+
         match kind {
             KIND_BUNDLE => println!("[{}] bundle recu de {}", name, from),
-
             KIND_CIPHERTEXT => {
                 let from_addr = ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
-
-                let result = if let Ok(prekey) = PreKeySignalMessage::try_from(payload.as_slice()) {
-                    futures::executor::block_on(session::decrypt_prekey_message(
-                        &mut store, &my_address, &from_addr, &prekey, &mut rng,
-                    ))
-                    .or_else(|_| {
-                        let signal = SignalMessage::try_from(payload.as_slice())
-                            .map_err(|e| SignalProtocolError::InvalidMessage(CiphertextMessageType::Whisper, format!("{:?}", e)))?;
-                        futures::executor::block_on(session::decrypt_message(
-                            &mut store, &my_address, &from_addr, &signal, &mut rng,
-                        ))
-                    })
-                } else if let Ok(signal) = SignalMessage::try_from(payload.as_slice()) {
-                    futures::executor::block_on(session::decrypt_message(
-                        &mut store, &my_address, &from_addr, &signal, &mut rng,
-                    ))
-                } else {
-                    eprintln!("[{}] message illisible", name);
-                    continue;
-                };
-
-                match result {
-                    Ok(plain) => println!("[{}] << {} : {}", name, from, String::from_utf8_lossy(&plain)),
+                match try_decrypt(&mut store, &my_address, &from_addr, &payload, &mut rng) {
+                    Ok(text) => println!("\n[{}] << {} : {}", name, from, text),
                     Err(e) => eprintln!("[{}] erreur dechiffrement: {:?}", name, e),
                 }
             }
             _ => {}
         }
     }
+
+    Ok(())
 }
 
 fn run_connect(addr: &str, name: &str, dest: &str) -> io::Result<()> {
-    let mut rng = rand::rng();
     let keys = keys::generate_all_keys().expect("keys");
-    let mut store = make_store(&keys);
+    let store = make_store(&keys);
 
     let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
     let dest_address = ProtocolAddress::new(dest.to_string(), DeviceId::new(1).unwrap());
@@ -157,22 +173,67 @@ fn run_connect(addr: &str, name: &str, dest: &str) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
     println!("[{}] bundle de {} recu", name, dest);
 
-    futures::executor::block_on(session::establish_session(
-        &mut store, &my_address, &dest_address, &bob_bundle, &mut rng,
-    ))
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+    let mut rng = rand::rng();
+
+    let store = Arc::new(Mutex::new(store));
+    {
+        let mut s = store.lock().unwrap();
+        futures::executor::block_on(session::establish_session(
+            &mut s, &my_address, &dest_address, &bob_bundle, &mut rng,
+        ))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+    }
     println!("[{}] session etablie avec {}", name, dest);
 
+    // --- Thread d'écoute en arrière-plan ---
+    let mut stream_reader = client.stream.try_clone()?;
+    let listen_store = Arc::clone(&store);
+    let listen_name = name.to_string();
+    let listen_my_address = my_address.clone();
+
+    thread::spawn(move || {
+        let mut rng = rand::rng();
+        loop {
+            match network::recv_frame(&mut stream_reader) {
+                Ok(frame) => {
+                    let (kind, from, payload) = match network::decode_envelope(&frame) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if kind == KIND_CIPHERTEXT {
+                        let from_addr = ProtocolAddress::new(from.clone(), 
+DeviceId::new(1).unwrap());
+                        let mut s = listen_store.lock().unwrap();
+                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, 
+&mut rng) {
+                            Ok(text) => println!("\n[{}] << {} : {}", listen_name, from, 
+text),
+                            Err(e) => eprintln!("[{}] erreur: {:?}", listen_name, e),
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("[{}] thread d'ecoute termine", listen_name);
+                    break;
+                }
+            }
+        }
+    });
+
+    // --- Boucle d'envoi ---
     println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() { continue; }
 
-        let ct = futures::executor::block_on(session::encrypt_message(
-            &mut store, &my_address, &dest_address, line.as_bytes(), &mut rng,
-        ))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+        let ct = {
+            let mut s = store.lock().unwrap();
+            futures::executor::block_on(session::encrypt_message(
+                &mut s, &my_address, &dest_address, line.as_bytes(), &mut rng,
+            ))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?
+        };
 
         let bytes = ct.serialize();
         client.send_ciphertext(dest, &bytes)?;

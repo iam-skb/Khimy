@@ -4,12 +4,13 @@ use std::io;
 use std::net::TcpStream;
 
 use crate::network::{
-    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE, KIND_BUNDLE_REQUEST,
+    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE, 
+KIND_BUNDLE_REQUEST,
     KIND_CIPHERTEXT,
 };
 
 pub struct Client {
-    stream: TcpStream,
+    pub stream: TcpStream,
     pub name: String,
 }
 
