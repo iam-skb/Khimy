@@ -1,118 +1,183 @@
+mod client;
 mod keys;
+mod network;
+mod relay;
 mod session;
 mod stores;
 mod stores_wrappers;
 
+use std::env;
+use std::io::{self, BufRead};
+
+use client::Client;
 use libsignal_protocol::*;
+use network::{deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT};
 use stores::InMemoryStores;
 
-fn main() {
-    println!("Khimy - chat chiffre de bout en bout");
-    println!("=== Test chiffrement/dechiffrement ===\n");
+fn usage() -> ! {
+    eprintln!(
+        "Usage:\n\
+         \tkhimy relay <addr>\n\
+         \tkhimy listen <addr> <nom>\n\
+         \tkhimy connect <addr> <nom> <dest>\n\
+         \n\
+         Exemple:\n\
+         \tkhimy relay 127.0.0.1:9000\n\
+         \tkhimy listen 127.0.0.1:9000 bob\n\
+         \tkhimy connect 127.0.0.1:9000 alice bob"
+    );
+    std::process::exit(2);
+}
 
-    // 1. Générer les clés d'Alice et Bob
-    let alice_keys = keys::generate_all_keys().expect("Alice keys");
-    let bob_keys = keys::generate_all_keys().expect("Bob keys");
-
-    let alice_address = ProtocolAddress::new("alice".to_string(), DeviceId::new(1).unwrap());
-    let bob_address = ProtocolAddress::new("bob".to_string(), DeviceId::new(1).unwrap());
-
-    let mut alice_store =
-        InMemoryStores::new(alice_keys.identity_key_pair.clone(), alice_keys.registration_id);
-    let mut bob_store =
-        InMemoryStores::new(bob_keys.identity_key_pair.clone(), bob_keys.registration_id);
-
-    // 2. Peupler le store de Bob avec SES clés (pour qu'il puisse déchiffrer)
-    {
-        let mut spk = bob_store.signed_pre_keys.lock().unwrap();
-        spk.insert(bob_keys.signed_pre_key.0, bob_keys.signed_pre_key.1.clone());
+fn main() -> io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 3 {
+        usage();
     }
-    {
-        let mut kpk = bob_store.kyber_pre_keys.lock().unwrap();
-        kpk.insert(bob_keys.kyber_pre_key.0, bob_keys.kyber_pre_key.1.clone());
+
+    match args[1].as_str() {
+        "relay" => relay::run_server(&args[2]),
+        "listen" => {
+            if args.len() < 4 { usage(); }
+            run_listen(&args[2], &args[3])
+        }
+        "connect" => {
+            if args.len() < 5 { usage(); }
+            run_connect(&args[2], &args[3], &args[4])
+        }
+        _ => usage(),
     }
+}
+
+fn make_store(keys: &keys::GeneratedKeys) -> InMemoryStores {
+    let store = InMemoryStores::new(keys.identity_key_pair.clone(), keys.registration_id);
+    store.signed_pre_keys.lock().unwrap()
+        .insert(keys.signed_pre_key.0, keys.signed_pre_key.1.clone());
+    store.kyber_pre_keys.lock().unwrap()
+        .insert(keys.kyber_pre_key.0, keys.kyber_pre_key.1.clone());
     {
-        let mut pk = bob_store.pre_keys.lock().unwrap();
-        for (id, record) in &bob_keys.pre_keys {
-            pk.insert(*id, record.clone());
+        let mut pk = store.pre_keys.lock().unwrap();
+        for (id, rec) in &keys.pre_keys {
+            pk.insert(*id, rec.clone());
         }
     }
+    store
+}
 
-    println!("[OK] Alice et Bob ont leurs cles");
-    println!();
+fn build_bundle(keys: &keys::GeneratedKeys) -> PreKeyBundle {
+    let pre = &keys.pre_keys[0];
+    let spk = &keys.signed_pre_key;
+    let kpk = &keys.kyber_pre_key;
 
-    // 3. Construire le PreKeyBundle de Bob
-    let bob_pre_key = bob_keys.pre_keys[0].clone();
-    let bob_signed_pre_key = bob_keys.signed_pre_key.clone();
-    let bob_kyber_pre_key = bob_keys.kyber_pre_key.clone();
-
-    let bob_bundle = PreKeyBundle::new(
-        bob_keys.registration_id,
+    PreKeyBundle::new(
+        keys.registration_id,
         DeviceId::new(1).unwrap(),
-        Some((bob_pre_key.0, bob_pre_key.1.public_key().unwrap())),
-        bob_signed_pre_key.0,
-        bob_signed_pre_key.1.public_key().unwrap(),
-        bob_signed_pre_key.1.signature().unwrap().to_vec(),
-        bob_kyber_pre_key.0,
-        bob_kyber_pre_key.1.public_key().unwrap(),
-        bob_kyber_pre_key.1.signature().unwrap().to_vec(),
-        *bob_keys.identity_key_pair.identity_key(),
+        Some((pre.0, pre.1.public_key().unwrap())),
+        spk.0,
+        spk.1.public_key().unwrap(),
+        spk.1.signature().unwrap().to_vec(),
+        kpk.0,
+        kpk.1.public_key().unwrap(),
+        kpk.1.signature().unwrap().to_vec(),
+        *keys.identity_key_pair.identity_key(),
     )
-    .expect("PreKeyBundle Bob");
+    .expect("PreKeyBundle")
+}
 
-    println!("[OK] PreKeyBundle de Bob construit");
-    println!();
-
-    // 4. Alice établit la session avec Bob
+fn run_listen(addr: &str, name: &str) -> io::Result<()> {
     let mut rng = rand::rng();
-    println!("[1] Alice etablit la session...");
-    futures::executor::block_on(session::establish_session(
-        &mut alice_store,
-        &alice_address,
-        &bob_address,
-        &bob_bundle,
-        &mut rng,
-    ))
-    .expect("establish_session Alice");
-    println!("    OK");
-    println!();
+    let keys = keys::generate_all_keys().expect("keys");
+    let mut store = make_store(&keys);
 
-    // 5. Alice chiffre un message
-    let plaintext = b"Salut Bob ! Ceci est un message chiffre.";
-    println!("[2] Alice chiffre : {:?}", String::from_utf8_lossy(plaintext));
-    let ciphertext = futures::executor::block_on(session::encrypt_message(
-        &mut alice_store,
-        &alice_address,
-        &bob_address,
-        plaintext,
-        &mut rng,
-    ))
-    .expect("encrypt_message");
-    println!("    Ciphertext : {} octets", ciphertext.serialize().len());
-    println!();
+    let bundle = build_bundle(&keys);
+    let bundle_bytes = serialize_bundle(&bundle)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
 
-    // 6. Bob déchiffre le premier message
-    println!("[3] Bob dechiffre le premier message...");
-    let prekey_msg = match ciphertext {
-        CiphertextMessage::PreKeySignalMessage(m) => m,
-        _ => panic!("Attendu PreKeySignalMessage"),
-    };
+    let mut client = Client::connect(addr, name)?;
+    client.publish_bundle(&bundle_bytes)?;
+    println!("[{}] connecte a {}, bundle publie", name, addr);
 
-    let decrypted = futures::executor::block_on(session::decrypt_prekey_message(
-        &mut bob_store,
-        &bob_address,
-        &alice_address,
-        &prekey_msg,
-        &mut rng,
-    ))
-    .expect("decrypt_prekey_message Bob");
+    let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
 
-    println!("    Message dechiffre : {:?}", String::from_utf8_lossy(&decrypted));
-    println!();
+    loop {
+        let (kind, from, payload) = client.recv()?;
+        match kind {
+            KIND_BUNDLE => println!("[{}] bundle recu de {}", name, from),
 
-    if decrypted == plaintext {
-        println!(">>> SUCCES : le message a bien ete chiffre puis dechiffre !");
-    } else {
-        println!(">>> ECHEC : le message dechiffre ne correspond pas.");
+            KIND_CIPHERTEXT => {
+                let from_addr = ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
+
+                let result = if let Ok(prekey) = PreKeySignalMessage::try_from(payload.as_slice()) {
+                    futures::executor::block_on(session::decrypt_prekey_message(
+                        &mut store, &my_address, &from_addr, &prekey, &mut rng,
+                    ))
+                    .or_else(|_| {
+                        let signal = SignalMessage::try_from(payload.as_slice())
+                            .map_err(|e| SignalProtocolError::InvalidMessage(CiphertextMessageType::Whisper, format!("{:?}", e)))?;
+                        futures::executor::block_on(session::decrypt_message(
+                            &mut store, &my_address, &from_addr, &signal, &mut rng,
+                        ))
+                    })
+                } else if let Ok(signal) = SignalMessage::try_from(payload.as_slice()) {
+                    futures::executor::block_on(session::decrypt_message(
+                        &mut store, &my_address, &from_addr, &signal, &mut rng,
+                    ))
+                } else {
+                    eprintln!("[{}] message illisible", name);
+                    continue;
+                };
+
+                match result {
+                    Ok(plain) => println!("[{}] << {} : {}", name, from, String::from_utf8_lossy(&plain)),
+                    Err(e) => eprintln!("[{}] erreur dechiffrement: {:?}", name, e),
+                }
+            }
+            _ => {}
+        }
     }
+}
+
+fn run_connect(addr: &str, name: &str, dest: &str) -> io::Result<()> {
+    let mut rng = rand::rng();
+    let keys = keys::generate_all_keys().expect("keys");
+    let mut store = make_store(&keys);
+
+    let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
+    let dest_address = ProtocolAddress::new(dest.to_string(), DeviceId::new(1).unwrap());
+
+    let mut client = Client::connect(addr, name)?;
+    println!("[{}] connecte a {}, demande le bundle de {}", name, addr, dest);
+
+    client.request_bundle(dest)?;
+    let (kind, _from, bundle_bytes) = client.recv()?;
+    if kind != KIND_BUNDLE {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bundle attendu"));
+    }
+    let bob_bundle = deserialize_bundle(&bundle_bytes)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
+    println!("[{}] bundle de {} recu", name, dest);
+
+    futures::executor::block_on(session::establish_session(
+        &mut store, &my_address, &dest_address, &bob_bundle, &mut rng,
+    ))
+    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+    println!("[{}] session etablie avec {}", name, dest);
+
+    println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() { continue; }
+
+        let ct = futures::executor::block_on(session::encrypt_message(
+            &mut store, &my_address, &dest_address, line.as_bytes(), &mut rng,
+        ))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+
+        let bytes = ct.serialize();
+        client.send_ciphertext(dest, &bytes)?;
+        println!("[{}] -> {} ({} octets)", name, dest, bytes.len());
+    }
+
+    Ok(())
 }

@@ -102,3 +102,30 @@ pub async fn decrypt_prekey_message<R: Rng + CryptoRng>(
     )
     .await
 }
+
+pub async fn decrypt_message<R: Rng + CryptoRng>(
+    store: &mut InMemoryStores,
+    local_address: &ProtocolAddress,
+    remote_address: &ProtocolAddress,
+    ciphertext: &SignalMessage,
+    rng: &mut R,
+) -> std::result::Result<Vec<u8>, SignalProtocolError> {
+    let mut identity_store = IdentityStoreView {
+        identity_key_pair: store.identity_key_pair.clone(),
+        registration_id: store.registration_id,
+        identities: &store.identities,
+    };
+    let mut session_store = SessionStoreView {
+        sessions: &store.sessions,
+    };
+
+    message_decrypt_signal(
+        ciphertext,
+        remote_address,
+        local_address,
+        &mut session_store,
+        &mut identity_store,
+        rng,
+    )
+    .await
+}
