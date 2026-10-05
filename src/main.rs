@@ -16,20 +16,16 @@ use libsignal_protocol::*;
 use network::{deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT};
 use stores::InMemoryStores;
 
-/// Adresse par défaut du relay Khimy.
-/// A remplacer plus tard par l'adresse du VPS.
-const DEFAULT_RELAY: &str = "127.0.0.1:9000";
-
 fn usage() -> ! {
     eprintln!(
         "Usage:\n\
          \tkhimy relay <addr>\n\
-         \tkhimy chat <mon_nom> <dest>\n\
+         \tkhimy chat <relay_addr> <mon_nom> <dest>\n\
          \n\
          Exemple:\n\
          \tkhimy relay 0.0.0.0:9000\n\
-         \tkhimy chat alice bob\n\
-         \tkhimy chat bob alice"
+         \tkhimy chat 127.0.0.1:9000 alice bob\n\
+         \tkhimy chat 192.168.1.42:9000 bob alice"
     );
     std::process::exit(2);
 }
@@ -43,8 +39,8 @@ fn main() -> io::Result<()> {
     match args[1].as_str() {
         "relay" => relay::run_server(&args[2]),
         "chat" => {
-            if args.len() < 4 { usage(); }
-            run_chat(DEFAULT_RELAY, &args[2], &args[3])
+            if args.len() < 5 { usage(); }
+            run_chat(&args[2], &args[3], &args[4])
         }
         _ => usage(),
     }
