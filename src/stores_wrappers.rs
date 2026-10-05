@@ -1,11 +1,10 @@
-//! Wrappers individuels autour des HashMaps de InMemoryStores.
+//! Wrappers individuels autour des Mutex de InMemoryStores.
 //!
 //! libsignal demande un `&mut dyn Trait` par store, pas un objet combiné.
-//! Ces wrappers exposent chaque HashMap sous forme d'un store indépendant.
+//! Ces wrappers prennent des RÉFÉRENCES vers les Mutex pour ne rien consommer.
 
 use async_trait::async_trait;
 use libsignal_protocol::*;
-
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -17,14 +16,14 @@ pub fn addr_key(address: &ProtocolAddress) -> String {
 
 // ─── Identity Store ─────────────────────────────────────────
 
-pub struct IdentityStoreView {
+pub struct IdentityStoreView<'a> {
     pub identity_key_pair: IdentityKeyPair,
     pub registration_id: u32,
-    pub identities: Mutex<HashMap<String, IdentityKey>>,
+    pub identities: &'a Mutex<HashMap<String, IdentityKey>>,
 }
 
 #[async_trait(?Send)]
-impl IdentityKeyStore for IdentityStoreView {
+impl IdentityKeyStore for IdentityStoreView<'_> {
     async fn get_identity_key_pair(&self) -> Result<IdentityKeyPair> {
         Ok(self.identity_key_pair.clone())
     }
@@ -60,16 +59,16 @@ impl IdentityKeyStore for IdentityStoreView {
 
 // ─── PreKey Store ───────────────────────────────────────────
 
-pub struct PreKeyStoreView {
-    pub pre_keys: Mutex<HashMap<PreKeyId, PreKeyRecord>>,
+pub struct PreKeyStoreView<'a> {
+    pub pre_keys: &'a Mutex<HashMap<PreKeyId, PreKeyRecord>>,
 }
 
 #[async_trait(?Send)]
-impl PreKeyStore for PreKeyStoreView {
+impl PreKeyStore for PreKeyStoreView<'_> {
     async fn get_pre_key(&self, prekey_id: PreKeyId) -> Result<PreKeyRecord> {
         let keys = self.pre_keys.lock().unwrap();
         keys.get(&prekey_id).cloned()
-            .ok_or_else(|| SignalProtocolError::InvalidPreKeyId)
+            .ok_or(SignalProtocolError::InvalidPreKeyId)
     }
     async fn save_pre_key(&mut self, prekey_id: PreKeyId, record: &PreKeyRecord) -> Result<()> {
         self.pre_keys.lock().unwrap().insert(prekey_id, record.clone());
@@ -83,19 +82,19 @@ impl PreKeyStore for PreKeyStoreView {
 
 // ─── Signed PreKey Store ────────────────────────────────────
 
-pub struct SignedPreKeyStoreView {
-    pub signed_pre_keys: Mutex<HashMap<SignedPreKeyId, SignedPreKeyRecord>>,
+pub struct SignedPreKeyStoreView<'a> {
+    pub signed_pre_keys: &'a Mutex<HashMap<SignedPreKeyId, SignedPreKeyRecord>>,
 }
 
 #[async_trait(?Send)]
-impl SignedPreKeyStore for SignedPreKeyStoreView {
+impl SignedPreKeyStore for SignedPreKeyStoreView<'_> {
     async fn get_signed_pre_key(
         &self,
         signed_prekey_id: SignedPreKeyId,
     ) -> Result<SignedPreKeyRecord> {
         let keys = self.signed_pre_keys.lock().unwrap();
         keys.get(&signed_prekey_id).cloned()
-            .ok_or_else(|| SignalProtocolError::InvalidSignedPreKeyId)
+            .ok_or(SignalProtocolError::InvalidSignedPreKeyId)
     }
     async fn save_signed_pre_key(
         &mut self,
@@ -109,19 +108,19 @@ impl SignedPreKeyStore for SignedPreKeyStoreView {
 
 // ─── Kyber PreKey Store ─────────────────────────────────────
 
-pub struct KyberPreKeyStoreView {
-    pub kyber_pre_keys: Mutex<HashMap<KyberPreKeyId, KyberPreKeyRecord>>,
+pub struct KyberPreKeyStoreView<'a> {
+    pub kyber_pre_keys: &'a Mutex<HashMap<KyberPreKeyId, KyberPreKeyRecord>>,
 }
 
 #[async_trait(?Send)]
-impl KyberPreKeyStore for KyberPreKeyStoreView {
+impl KyberPreKeyStore for KyberPreKeyStoreView<'_> {
     async fn get_kyber_pre_key(
         &self,
         kyber_prekey_id: KyberPreKeyId,
     ) -> Result<KyberPreKeyRecord> {
         let keys = self.kyber_pre_keys.lock().unwrap();
         keys.get(&kyber_prekey_id).cloned()
-            .ok_or_else(|| SignalProtocolError::InvalidKyberPreKeyId)
+            .ok_or(SignalProtocolError::InvalidKyberPreKeyId)
     }
     async fn save_kyber_pre_key(
         &mut self,
@@ -143,12 +142,12 @@ impl KyberPreKeyStore for KyberPreKeyStoreView {
 
 // ─── Session Store ──────────────────────────────────────────
 
-pub struct SessionStoreView {
-    pub sessions: Mutex<HashMap<String, SessionRecord>>,
+pub struct SessionStoreView<'a> {
+    pub sessions: &'a Mutex<HashMap<String, SessionRecord>>,
 }
 
 #[async_trait(?Send)]
-impl SessionStore for SessionStoreView {
+impl SessionStore for SessionStoreView<'_> {
     async fn load_session(&self, address: &ProtocolAddress) -> Result<Option<SessionRecord>> {
         let key = addr_key(address);
         let sessions = self.sessions.lock().unwrap();
