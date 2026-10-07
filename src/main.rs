@@ -1,4 +1,5 @@
 mod client;
+mod config;
 mod keys;
 mod network;
 mod persist;
@@ -23,6 +24,7 @@ fn usage() -> ! {
          \tkhimy relay <addr>\n\
          \tkhimy chat <relay_addr> <mon_nom> <dest>\n\
          \tkhimy connect\n\
+         \tkhimy config\n\
          \n\
          Exemple:\n\
          \tkhimy relay 0.0.0.0:9000\n\
@@ -51,32 +53,44 @@ fn main() -> io::Result<()> {
             let (addr, name, dest) = interactive_prompt()?;
             run_chat(&addr, &name, &dest)
         }
+        "config" => {
+            let path = config::path_string();
+            let cfg = config::load();
+            println!("Fichier de config : {}", path);
+            println!("relay  = {}", cfg.relay.as_deref().unwrap_or("(non defini)"));
+            println!("pseudo = {}", cfg.pseudo.as_deref().unwrap_or("(non defini)"));
+            Ok(())
+        }
         _ => usage(),
     }
 }
 
 fn interactive_prompt() -> io::Result<(String, String, String)> {
+    let cfg = config::load();
+
     println!();
     println!("=== Khimy ===");
     println!();
 
-    print!("Relay [127.0.0.1:9000] : ");
+    let default_relay = cfg.relay.as_deref().unwrap_or("127.0.0.1:9000");
+    print!("Relay [{}] : ", default_relay);
     io::stdout().flush()?;
     let mut addr = String::new();
     io::stdin().read_line(&mut addr)?;
     let addr = addr.trim();
-    let addr = if addr.is_empty() {
-        "127.0.0.1:9000"
-    } else {
-        addr
-    }
-    .to_string();
+    let addr = if addr.is_empty() { default_relay } else { addr }.to_string();
 
-    print!("Ton pseudo : ");
+    let default_pseudo = cfg.pseudo.as_deref().unwrap_or("");
+    if default_pseudo.is_empty() {
+        print!("Ton pseudo : ");
+    } else {
+        print!("Ton pseudo [{}] : ", default_pseudo);
+    }
     io::stdout().flush()?;
     let mut name = String::new();
     io::stdin().read_line(&mut name)?;
-    let name = name.trim().to_string();
+    let name = name.trim();
+    let name = if name.is_empty() { default_pseudo } else { name }.to_string();
     if name.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo vide"));
     }
@@ -87,10 +101,15 @@ fn interactive_prompt() -> io::Result<(String, String, String)> {
     io::stdin().read_line(&mut dest)?;
     let dest = dest.trim().to_string();
     if dest.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "destinataire vide",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "destinataire vide"));
+    }
+
+    let new_cfg = config::Config {
+        relay: Some(addr.clone()),
+        pseudo: Some(name.clone()),
+    };
+    if let Err(e) = config::save(&new_cfg) {
+        eprintln!("[config] avertissement: {}", e);
     }
 
     println!();
