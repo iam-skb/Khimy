@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod keys;
 mod network;
+mod notify;
 mod persist;
 mod relay;
 mod session;
@@ -323,6 +324,7 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
                         match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, &mut rng)
                         {
                             Ok(text) => {
+                                notify::message(&from, &text);
                                 println!("[{}] << {} : {}", listen_name, from, text);
                                 persist::save_all(&s, &listen_name);
                             }
@@ -419,6 +421,7 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
                         match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, &mut rng)
                         {
                             Ok(text) => {
+                                notify::message(&from, &text);
                                 println!();
                                 println!("[{}] << {} : {}", listen_name, from, text);
                                 println!(
