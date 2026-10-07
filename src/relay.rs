@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -70,6 +70,10 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
             drop(st);
             let err_env = encode_envelope(KIND_ERROR, &name, b"pseudo deja pris");
             let _ = send_frame(&mut stream, &err_env);
+            // Fermeture gracieuse : FIN au lieu de RST, laisse le temps
+            // au client de lire l'erreur.
+            let _ = stream.shutdown(Shutdown::Write);
+            std::thread::sleep(std::time::Duration::from_millis(500));
             return Ok(());
         }
     }
