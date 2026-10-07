@@ -8,7 +8,7 @@ use std::thread;
 
 use crate::network::{
     decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE,
-    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT,
+    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_ERROR,
 };
 
 struct State {
@@ -67,10 +67,10 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
         let st = state.lock().unwrap();
         if st.clients.contains_key(&name) {
             eprintln!("[relay] pseudo deja pris: {}", name);
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "pseudo deja pris",
-            ));
+            drop(st);
+            let err_env = encode_envelope(KIND_ERROR, &name, b"pseudo deja pris");
+            let _ = send_frame(&mut stream, &err_env);
+            return Ok(());
         }
     }
 

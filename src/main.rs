@@ -15,7 +15,9 @@ use std::thread;
 
 use client::Client;
 use libsignal_protocol::*;
-use network::{deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT};
+use network::{
+    deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT, KIND_ERROR,
+};
 use stores::InMemoryStores;
 
 fn usage() -> ! {
@@ -259,6 +261,13 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
                 println!("[{}] bundle de {} recu", name, from);
                 break bundle;
             }
+            KIND_ERROR => {
+                let msg = String::from_utf8_lossy(&payload);
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("relay: {}", msg),
+                ));
+            }
             KIND_CIPHERTEXT => {
                 eprintln!("[{}] message recu avant bundle, ignore", name);
             }
@@ -395,6 +404,14 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
+                    if kind == KIND_ERROR {
+                        eprintln!(
+                            "[{}] relay: {}",
+                            listen_name,
+                            String::from_utf8_lossy(&payload)
+                        );
+                        break;
+                    }
                     if kind == KIND_CIPHERTEXT {
                         let from_addr =
                             ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
@@ -404,7 +421,10 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
                             Ok(text) => {
                                 println!();
                                 println!("[{}] << {} : {}", listen_name, from, text);
-                                println!("[{}] /to {} pour repondre, ou tape ton message", listen_name, from);
+                                println!(
+                                    "[{}] /to {} pour repondre, ou tape ton message",
+                                    listen_name, from
+                                );
                                 *listen_last.lock().unwrap() = Some(from.clone());
                                 persist::save_all(&s, &listen_name);
                             }
