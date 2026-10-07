@@ -1,5 +1,4 @@
-//! Serveur relay : route les enveloppes. Sert aussi d'annuaire de 
-bundles.
+//! Serveur relay : route les enveloppes. Sert aussi d'annuaire de bundles.
 
 use std::collections::HashMap;
 use std::io;
@@ -20,9 +19,6 @@ struct State {
 
 type Shared = Arc<Mutex<State>>;
 
-/// Guard RAII : nettoie automatiquement le client à la sortie de 
-`handle_client`,
-/// même en cas de panic. Évite les fuites de pseudos dans `clients`.
 struct ClientGuard {
     name: String,
     state: Shared,
@@ -32,7 +28,7 @@ impl Drop for ClientGuard {
     fn drop(&mut self) {
         if let Ok(mut st) = self.state.lock() {
             st.clients.remove(&self.name);
-            println!("[relay] - {} deconnecte (cleanup auto)", self.name);
+            println!("[relay] - {} deconnecte", self.name);
         }
     }
 }
@@ -65,10 +61,8 @@ pub fn run_server(addr: &str) -> io::Result<()> {
 
 fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
     let name = String::from_utf8(recv_frame(&mut stream)?)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "nom 
-non-utf8"))?;
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "nom non-utf8"))?;
 
-    // Vérifie que le pseudo n'est pas déjà pris
     {
         let st = state.lock().unwrap();
         if st.clients.contains_key(&name) {
@@ -85,8 +79,6 @@ non-utf8"))?;
     let writer = stream.try_clone()?;
     state.lock().unwrap().clients.insert(name.clone(), writer);
 
-    // Guard RAII : nettoie automatiquement le pseudo à la sortie,
-    // même en cas de panic dans la boucle ci-dessous.
     let _guard = ClientGuard {
         name: name.clone(),
         state: Arc::clone(&state),
@@ -110,8 +102,7 @@ non-utf8"))?;
 
         match kind {
             KIND_BUNDLE_REQUEST => {
-                let bundle = 
-state.lock().unwrap().bundles.get(&dest).cloned();
+                let bundle = state.lock().unwrap().bundles.get(&dest).cloned();
                 if let Some(bytes) = bundle {
                     let env = encode_envelope(KIND_BUNDLE, &dest, &bytes);
                     let mut st = state.lock().unwrap();
@@ -119,8 +110,7 @@ state.lock().unwrap().bundles.get(&dest).cloned();
                         let _ = send_frame(w, &env);
                     }
                 } else {
-                    eprintln!("[relay] bundle inconnu: {}, on met en 
-attente", dest);
+                    eprintln!("[relay] bundle inconnu: {}, on met en attente", dest);
                     state
                         .lock()
                         .unwrap()
@@ -130,8 +120,7 @@ attente", dest);
             }
 
             KIND_BUNDLE => {
-                state.lock().unwrap().bundles.insert(name.clone(), 
-payload);
+                state.lock().unwrap().bundles.insert(name.clone(), payload);
 
                 let mut st = state.lock().unwrap();
                 let mut still_waiting = Vec::new();
@@ -148,12 +137,10 @@ payload);
 
                 for requester in &to_notify {
                     if let Some(bundle) = st.bundles.get(&name).cloned() {
-                        let env = encode_envelope(KIND_BUNDLE, &name, 
-&bundle);
+                        let env = encode_envelope(KIND_BUNDLE, &name, &bundle);
                         if let Some(w) = st.clients.get_mut(requester) {
                             let _ = send_frame(w, &env);
-                            println!("[relay] bundle de {} envoye a {}", 
-name, requester);
+                            println!("[relay] bundle de {} envoye a {}", name, requester);
                         }
                     }
                 }
@@ -162,8 +149,7 @@ name, requester);
             KIND_CIPHERTEXT => {
                 let mut st = state.lock().unwrap();
                 if let Some(target) = st.clients.get_mut(&dest) {
-                    let env = encode_envelope(KIND_CIPHERTEXT, &name, 
-&payload);
+                    let env = encode_envelope(KIND_CIPHERTEXT, &name, &payload);
                     if send_frame(target, &env).is_err() {
                         st.clients.remove(&dest);
                     }
