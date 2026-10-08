@@ -189,14 +189,13 @@ fn make_store(keys: &keys::GeneratedKeys) -> InMemoryStores {
 }
 
 fn build_bundle(keys: &keys::GeneratedKeys) -> PreKeyBundle {
-    let pre = &keys.pre_keys[0];
     let spk = &keys.signed_pre_key;
     let kpk = &keys.kyber_pre_key;
 
     PreKeyBundle::new(
         keys.registration_id,
         DeviceId::new(1).unwrap(),
-        Some((pre.0, pre.1.public_key().unwrap())),
+        None,
         spk.0,
         spk.1.public_key().unwrap(),
         spk.1.signature().unwrap().to_vec(),
