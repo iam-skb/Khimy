@@ -2,8 +2,6 @@
 
 Chat chiffré de bout en bout (E2EE) en Rust, basé sur le protocole Signal.
 
-![Khimy en action](docs/screenshot.png)
-
 ## Ce que c'est
 
 Khimy implémente les mêmes primitives cryptographiques que Signal utilise en production :
@@ -28,7 +26,7 @@ Le script installe Rust + protoc si nécessaire, clone le repo, compile et insta
 
 ## Utilisation
 
-| Commande | Role |
+| Commande | Rôle |
 |---|---|
 | `khimy relay <addr>` | Lance un serveur relay (VPS) |
 | `khimy connect` | Initie une conversation |
