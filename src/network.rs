@@ -33,6 +33,7 @@ pub const KIND_BUNDLE_REQUEST: u8 = 0x01;
 pub const KIND_BUNDLE: u8 = 0x02;
 pub const KIND_CIPHERTEXT: u8 = 0x03;
 pub const KIND_ERROR: u8 = 0x04;
+pub const KIND_FETCH_PENDING: u8 = 0x05;
 
 pub fn encode_envelope(kind: u8, dest: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + 4 + dest.len() + 4 + payload.len());

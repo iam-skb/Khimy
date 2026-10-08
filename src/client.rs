@@ -4,9 +4,8 @@ use std::io;
 use std::net::TcpStream;
 
 use crate::network::{
-    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE, 
-KIND_BUNDLE_REQUEST,
-    KIND_CIPHERTEXT,
+    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE,
+    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_FETCH_PENDING,
 };
 
 pub struct Client {
@@ -33,6 +32,11 @@ impl Client {
 
     pub fn send_ciphertext(&mut self, dest: &str, ciphertext: &[u8]) -> io::Result<()> {
         let env = encode_envelope(KIND_CIPHERTEXT, dest, ciphertext);
+        send_frame(&mut self.stream, &env)
+    }
+
+    pub fn fetch_pending(&mut self) -> io::Result<()> {
+        let env = encode_envelope(KIND_FETCH_PENDING, &self.name, &[]);
         send_frame(&mut self.stream, &env)
     }
 

@@ -341,6 +341,11 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
+    // Recupere les messages recus pendant qu'on etait hors-ligne
+    if let Err(e) = client.fetch_pending() {
+        eprintln!("[{}] avertissement fetch pending: {}", name, e);
+    }
+
     println!("[{}] tape tes messages (Ctrl-D pour quitter)", name);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
@@ -444,6 +449,13 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
             }
         }
     });
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Recupere les messages recus pendant qu'on etait hors-ligne
+    if let Err(e) = client.fetch_pending() {
+        eprintln!("[{}] avertissement fetch pending: {}", name, e);
+    }
 
     println!();
     println!("[{}] Commandes:", name);
