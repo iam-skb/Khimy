@@ -8,6 +8,7 @@ mod relay;
 mod session;
 mod stores;
 mod stores_wrappers;
+mod tui;
 
 use std::env;
 use std::io::{self, BufRead, Write};
@@ -29,12 +30,14 @@ fn usage() -> ! {
          \tkhimy connect\n\
          \tkhimy listen\n\
          \tkhimy config\n\
+         \tkhimy tui\n\
          \n\
          Exemple:\n\
          \tkhimy relay 0.0.0.0:9000\n\
          \tkhimy chat 127.0.0.1:9000 alice bob\n\
          \tkhimy connect\n\
-         \tkhimy listen"
+         \tkhimy listen\n\
+         \tkhimy tui"
     );
     std::process::exit(2);
 }
@@ -70,6 +73,7 @@ fn main() -> io::Result<()> {
             println!("pseudo = {}", cfg.pseudo.as_deref().unwrap_or("(non defini)"));
             Ok(())
         }
+        "tui" => tui::run(),
         _ => usage(),
     }
 }
@@ -341,7 +345,6 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Recupere les messages recus pendant qu'on etait hors-ligne
     if let Err(e) = client.fetch_pending() {
         eprintln!("[{}] avertissement fetch pending: {}", name, e);
     }
@@ -452,7 +455,6 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Recupere les messages recus pendant qu'on etait hors-ligne
     if let Err(e) = client.fetch_pending() {
         eprintln!("[{}] avertissement fetch pending: {}", name, e);
     }

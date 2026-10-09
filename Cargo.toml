@@ -5,11 +5,13 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1.92"
+crossterm = "0.29.0"
 futures = "0.3.34"
 hex = "0.4.3"
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", version = "0.1.0" }
 prost = "0.14.4"
 prost-types = "0.14.4"
 rand = "0.9"
+ratatui = "0.30.2"
 tokio = { version = "1.53.2", features = ["full"] }
 uuid = { version = "1.27.0", features = ["v4"] }
