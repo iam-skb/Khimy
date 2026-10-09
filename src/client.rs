@@ -15,14 +15,11 @@ pub struct Client {
 }
 
 impl Client {
-    /// Se connecte et attend la confirmation du relay (OK ou ERROR).
-    /// Si le relay refuse (pseudo deja pris), retourne une erreur claire.
     pub fn connect(addr: &str, name: &str) -> io::Result<Self> {
         let mut stream = TcpStream::connect(addr)?;
         send_frame(&mut stream, name.as_bytes())?;
 
-        // Handshake : le relay doit repondre OK ou ERROR immediatement.
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         let frame_result = recv_frame(&mut stream);
         stream.set_read_timeout(None)?;
         let frame = frame_result?;
@@ -71,5 +68,24 @@ impl Client {
     pub fn recv(&mut self) -> io::Result<(u8, String, Vec<u8>)> {
         let frame = recv_frame(&mut self.stream)?;
         decode_envelope(&frame)
+    }
+
+    pub fn recv_timeout(
+        &mut self,
+        dur: Duration,
+    ) -> io::Result<Option<(u8, String, Vec<u8>)>> {
+        self.stream.set_read_timeout(Some(dur))?;
+        let result = recv_frame(&mut self.stream);
+        self.stream.set_read_timeout(None)?;
+        match result {
+            Ok(frame) => Ok(Some(decode_envelope(&frame)?)),
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 }

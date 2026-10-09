@@ -258,12 +258,23 @@ pub fn run() -> io::Result<()> {
     loop {
         let (relay, pseudo, dest) = setup_prompt()?;
 
-        match Client::connect(&relay, &pseudo) {
-            Ok(client) => return run_with_client(client, relay, pseudo, dest),
+        let client = match Client::connect(&relay, &pseudo) {
+            Ok(c) => c,
             Err(e) if e.to_string().contains("pseudo deja pris") => {
                 clear_default_pseudo();
                 eprintln!();
                 eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                eprintln!();
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+
+        match run_with_client(client, relay, pseudo, dest) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.to_string().contains("n'est pas connecte") => {
+                eprintln!();
+                eprintln!("  Reessaie quand il sera connecte, ou change de destinataire.");
                 eprintln!();
                 continue;
             }
@@ -291,22 +302,41 @@ fn run_with_client(
     client.publish_bundle(&bundle_bytes)?;
     println!("[{}] bundle publie", pseudo);
 
-    // Demande le bundle du destinataire
+    // Demande le bundle du destinataire, avec timeout de 5 s.
+    client.request_bundle(&dest)?;
     let dest_bundle = loop {
-        client.request_bundle(&dest)?;
-        let (kind, from, payload) = client.recv()?;
-        match kind {
-            KIND_BUNDLE => {
-                let b = deserialize_bundle(&payload)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
+        match client.recv_timeout(Duration::from_secs(5))? {
+            Some((KIND_BUNDLE, from, payload)) => {
+                let b = deserialize_bundle(&payload).map_err(|e| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e))
+                })?;
                 println!("[{}] bundle de {} recu", pseudo, from);
                 break b;
             }
-            KIND_ERROR => {
+            Some((KIND_ERROR, _, payload)) => {
                 let msg = String::from_utf8_lossy(&payload);
-                return Err(io::Error::new(io::ErrorKind::Other, format!("relay: {}", msg)));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("relay: {}", msg),
+                ));
             }
-            _ => {}
+            Some((KIND_CIPHERTEXT, _, _)) => {
+                // Ignore : on attend le bundle.
+            }
+            Some((kind, _, _)) => {
+                eprintln!("[{}] kind inattendu: 0x{:02x}", pseudo, kind);
+            }
+            None => {
+                eprintln!();
+                eprintln!("[!] {} n'est pas connecte au relay.", dest);
+                eprintln!("    Demande-lui de lancer khimy de son cote,");
+                eprintln!("    ou verifie le pseudo.");
+                eprintln!();
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("{} n'est pas connecte", dest),
+                ));
+            }
         }
     };
 
