@@ -20,11 +20,13 @@ echo "[2/5] Verification de Rust..."
 if ! command -v cargo >/dev/null 2>&1; then
     echo "    Rust absent. Installation..."
     if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s 
+-- -y
         # shellcheck disable=SC1091
         source "${HOME}/.cargo/env"
     else
-        echo "    OS non supporte pour l'installation automatique de Rust."
+        echo "    OS non supporte pour l'installation automatique de 
+Rust."
         echo "    Installe Rust manuellement : https://rustup.rs/"
         exit 1
     fi
@@ -40,7 +42,8 @@ if ! command -v protoc >/dev/null 2>&1; then
         if command -v brew >/dev/null 2>&1; then
             brew install protobuf
         else
-            echo "    Homebrew absent. Installe brew d'abord : https://brew.sh/"
+            echo "    Homebrew absent. Installe brew d'abord : 
+https://brew.sh/"
             exit 1
         fi
     elif [ "$OS" = "Linux" ]; then
@@ -53,7 +56,8 @@ if ! command -v protoc >/dev/null 2>&1; then
             sudo pacman -S --noconfirm protobuf base-devel
         else
             echo "    Gestionnaire de paquets inconnu."
-            echo "    Installe protoc manuellement : https://grpc.io/docs/protoc-installation/"
+            echo "    Installe protoc manuellement : 
+https://grpc.io/docs/protoc-installation/"
             exit 1
         fi
     fi
@@ -104,15 +108,16 @@ echo "=== Installation terminee ! ==="
 echo ""
 echo "Commandes disponibles :"
 echo ""
+echo "    khimy                             # interface TUI (recommande)"
 echo "    khimy relay <addr>                # serveur (sur VPS)"
-echo "    khimy connect                     # initier une conversation"
-echo "    khimy listen                      # attendre les messages"
+echo "    khimy connect                     # mode texte : initier"
+echo "    khimy listen                      # mode texte : attendre"
 echo "    khimy config                      # voir la config"
 echo ""
-echo "Exemple pour discuter avec un ami :"
+echo "Pour discuter avec un ami :"
 echo ""
-echo "    khimy connect"
-echo "    Relay       : 78.232.48.151:9000"
-echo "    Ton pseudo  : ton_nom"
-echo "    Destinataire: son_nom"
+echo "    khimy"
+echo "    Relay        : 78.232.48.151:9000"
+echo "    Ton pseudo   : ton_nom"
+echo "    Destinataire : son_nom"
 echo ""
