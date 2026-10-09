@@ -18,7 +18,8 @@ use std::thread;
 use client::Client;
 use libsignal_protocol::*;
 use network::{
-    deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT, KIND_ERROR,
+    deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT, 
+KIND_ERROR,
 };
 use stores::InMemoryStores;
 
@@ -45,16 +46,20 @@ fn usage() -> ! {
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        usage();
+        return tui::run();
     }
 
     match args[1].as_str() {
         "relay" => {
-            if args.len() < 3 { usage(); }
+            if args.len() < 3 {
+                usage();
+            }
             relay::run_server(&args[2])
         }
         "chat" => {
-            if args.len() < 5 { usage(); }
+            if args.len() < 5 {
+                usage();
+            }
             run_chat(&args[2], &args[3], &args[4])
         }
         "connect" => loop {
@@ -64,7 +69,8 @@ fn main() -> io::Result<()> {
                 Err(e) if is_pseudo_taken(&e) => {
                     clear_default_pseudo();
                     eprintln!();
-                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un 
+autre.");
                     eprintln!();
                     continue;
                 }
@@ -78,7 +84,8 @@ fn main() -> io::Result<()> {
                 Err(e) if is_pseudo_taken(&e) => {
                     clear_default_pseudo();
                     eprintln!();
-                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un 
+autre.");
                     eprintln!();
                     continue;
                 }
@@ -89,8 +96,10 @@ fn main() -> io::Result<()> {
             let path = config::path_string();
             let cfg = config::load();
             println!("Fichier de config : {}", path);
-            println!("relay  = {}", cfg.relay.as_deref().unwrap_or("(non defini)"));
-            println!("pseudo = {}", cfg.pseudo.as_deref().unwrap_or("(non defini)"));
+            println!("relay  = {}", cfg.relay.as_deref().unwrap_or("(non 
+defini)"));
+            println!("pseudo = {}", cfg.pseudo.as_deref().unwrap_or("(non 
+defini)"));
             Ok(())
         }
         "tui" => tui::run(),
@@ -134,7 +143,8 @@ fn interactive_prompt() -> io::Result<(String, String, String)> {
     let mut addr = String::new();
     io::stdin().read_line(&mut addr)?;
     let addr = addr.trim();
-    let addr = if addr.is_empty() { default_relay } else { addr }.to_string();
+    let addr = if addr.is_empty() { default_relay } else { addr 
+}.to_string();
 
     let default_pseudo = cfg.pseudo.as_deref().unwrap_or("");
     if default_pseudo.is_empty() {
@@ -146,9 +156,11 @@ fn interactive_prompt() -> io::Result<(String, String, String)> {
     let mut name = String::new();
     io::stdin().read_line(&mut name)?;
     let name = name.trim();
-    let name = if name.is_empty() { default_pseudo } else { name }.to_string();
+    let name = if name.is_empty() { default_pseudo } else { name 
+}.to_string();
     if name.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo vide"));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo 
+vide"));
     }
 
     print!("Destinataire : ");
@@ -157,7 +169,8 @@ fn interactive_prompt() -> io::Result<(String, String, String)> {
     io::stdin().read_line(&mut dest)?;
     let dest = dest.trim().to_string();
     if dest.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "destinataire vide"));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, 
+"destinataire vide"));
     }
 
     println!();
@@ -177,7 +190,8 @@ fn interactive_prompt_listen() -> io::Result<(String, String)> {
     let mut addr = String::new();
     io::stdin().read_line(&mut addr)?;
     let addr = addr.trim();
-    let addr = if addr.is_empty() { default_relay } else { addr }.to_string();
+    let addr = if addr.is_empty() { default_relay } else { addr 
+}.to_string();
 
     let default_pseudo = cfg.pseudo.as_deref().unwrap_or("");
     if default_pseudo.is_empty() {
@@ -189,9 +203,11 @@ fn interactive_prompt_listen() -> io::Result<(String, String)> {
     let mut name = String::new();
     io::stdin().read_line(&mut name)?;
     let name = name.trim();
-    let name = if name.is_empty() { default_pseudo } else { name }.to_string();
+    let name = if name.is_empty() { default_pseudo } else { name 
+}.to_string();
     if name.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo vide"));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo 
+vide"));
     }
 
     println!();
@@ -247,7 +263,8 @@ fn try_decrypt(
     rng: &mut (impl rand::Rng + rand::CryptoRng),
 ) -> Result<String, SignalProtocolError> {
     if let Ok(prekey) = PreKeySignalMessage::try_from(payload) {
-        if let Ok(plain) = futures::executor::block_on(session::decrypt_prekey_message(
+        if let Ok(plain) = 
+futures::executor::block_on(session::decrypt_prekey_message(
             store, my_address, from_addr, &prekey, rng,
         )) {
             return Ok(String::from_utf8_lossy(&plain).to_string());
@@ -271,7 +288,8 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
 
     persist::load_all(&store, name);
 
-    let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
+    let my_address = ProtocolAddress::new(name.to_string(), 
+DeviceId::new(1).unwrap());
     let dest_address = ProtocolAddress::new(dest.to_string(), 
 DeviceId::new(1).unwrap());
 
@@ -284,7 +302,8 @@ DeviceId::new(1).unwrap());
 
     let bundle = build_bundle(&keys);
     let bundle_bytes = serialize_bundle(&bundle)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", 
+e)))?;
     client.publish_bundle(&bundle_bytes)?;
     println!("[{}] bundle publie", name);
 
@@ -294,8 +313,8 @@ DeviceId::new(1).unwrap());
         match kind {
             KIND_BUNDLE => {
                 let bundle = deserialize_bundle(&payload)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, 
-format!("{:?}", e)))?;
+                    .map_err(|e| 
+io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
                 println!("[{}] bundle de {} recu", name, from);
                 break bundle;
             }
@@ -329,7 +348,8 @@ format!("{:?}", e)))?;
             &bob_bundle,
             &mut rng,
         ))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", 
+e)))?;
     }
     println!("[{}] session etablie avec {}", name, dest);
 
@@ -348,31 +368,36 @@ format!("{:?}", e)))?;
         loop {
             match network::recv_frame(&mut stream_reader) {
                 Ok(frame) => {
-                    let (kind, from, payload) = match network::decode_envelope(&frame) {
+                    let (kind, from, payload) = match 
+network::decode_envelope(&frame) {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
                     if kind == KIND_BUNDLE {
-                        println!("[{}] bundle recu de {}", listen_name, from);
+                        println!("[{}] bundle recu de {}", listen_name, 
+from);
                     } else if kind == KIND_CIPHERTEXT {
                         let from_addr =
                             ProtocolAddress::new(from.clone(), 
 DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
-                        match try_decrypt(&mut s, &listen_my_address, &from_addr, 
-&payload, &mut rng)
+                        match try_decrypt(&mut s, &listen_my_address, 
+&from_addr, &payload, &mut rng)
                         {
                             Ok(text) => {
                                 notify::message(&from, &text);
-                                println!("[{}] << {} : {}", listen_name, from, text);
+                                println!("[{}] << {} : {}", listen_name, 
+from, text);
                                 persist::save_all(&s, &listen_name);
                             }
-                            Err(e) => eprintln!("[{}] erreur: {:?}", listen_name, e),
+                            Err(e) => eprintln!("[{}] erreur: {:?}", 
+listen_name, e),
                         }
                     }
                 }
                 Err(_) => {
-                    eprintln!("[{}] thread d'ecoute termine", listen_name);
+                    eprintln!("[{}] thread d'ecoute termine", 
+listen_name);
                     break;
                 }
             }
@@ -402,7 +427,8 @@ DeviceId::new(1).unwrap());
                 line.as_bytes(),
                 &mut rng,
             ))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, 
+format!("{:?}", e)))?
         };
 
         let bytes = ct.serialize();
@@ -419,7 +445,8 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
 
     persist::load_all(&store, name);
 
-    let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
+    let my_address = ProtocolAddress::new(name.to_string(), 
+DeviceId::new(1).unwrap());
 
     let mut client = Client::connect(addr, name)?;
 
@@ -430,13 +457,15 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
 
     let bundle = build_bundle(&keys);
     let bundle_bytes = serialize_bundle(&bundle)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", 
+e)))?;
     client.publish_bundle(&bundle_bytes)?;
     println!("[{}] bundle publie, en attente de messages...", name);
 
     let mut rng = rand::rng();
     let store = Arc::new(Mutex::new(store));
-    let last_sender: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let last_sender: Arc<Mutex<Option<String>>> = 
+Arc::new(Mutex::new(None));
 
     let mut stream_reader = client.stream.try_clone()?;
     let listen_store = Arc::clone(&store);
@@ -449,7 +478,8 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
         loop {
             match network::recv_frame(&mut stream_reader) {
                 Ok(frame) => {
-                    let (kind, from, payload) = match network::decode_envelope(&frame) {
+                    let (kind, from, payload) = match 
+network::decode_envelope(&frame) {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
@@ -466,18 +496,21 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
                             ProtocolAddress::new(from.clone(), 
 DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
-                        match try_decrypt(&mut s, &listen_my_address, &from_addr, 
-&payload, &mut rng)
+                        match try_decrypt(&mut s, &listen_my_address, 
+&from_addr, &payload, &mut rng)
                         {
                             Ok(text) => {
                                 notify::message(&from, &text);
                                 println!();
-                                println!("[{}] << {} : {}", listen_name, from, text);
+                                println!("[{}] << {} : {}", listen_name, 
+from, text);
                                 println!(
-                                    "[{}] /to {} pour repondre, ou tape ton message",
+                                    "[{}] /to {} pour repondre, ou tape 
+ton message",
                                     listen_name, from
                                 );
-                                *listen_last.lock().unwrap() = Some(from.clone());
+                                *listen_last.lock().unwrap() = 
+Some(from.clone());
                                 persist::save_all(&s, &listen_name);
                             }
                             Err(e) => eprintln!(
@@ -505,7 +538,8 @@ DeviceId::new(1).unwrap());
     println!("[{}] Commandes:", name);
     println!("  /to <nom>  definit le destinataire courant");
     println!("  /quit      quitter");
-    println!("  <texte>    envoyer au dernier expediteur (ou destinataire courant)");
+    println!("  <texte>    envoyer au dernier expediteur (ou destinataire 
+courant)");
     println!();
 
     let stdin = io::stdin();
@@ -538,11 +572,13 @@ DeviceId::new(1).unwrap());
         } else if let Some(d) = last_sender.lock().unwrap().clone() {
             d
         } else {
-            eprintln!("[{}] pas de destinataire. Utilise /to <nom>", name);
+            eprintln!("[{}] pas de destinataire. Utilise /to <nom>", 
+name);
             continue;
         };
 
-        let dest_addr = ProtocolAddress::new(dest.clone(), DeviceId::new(1).unwrap());
+        let dest_addr = ProtocolAddress::new(dest.clone(), 
+DeviceId::new(1).unwrap());
 
         let ct_result = {
             let mut s = store.lock().unwrap();
@@ -559,13 +595,15 @@ DeviceId::new(1).unwrap());
             Ok(ct) => {
                 let bytes = ct.serialize();
                 client.send_ciphertext(&dest, &bytes)?;
-                println!("[{}] -> {} ({} octets)", name, dest, bytes.len());
+                println!("[{}] -> {} ({} octets)", name, dest, 
+bytes.len());
             }
             Err(e) => {
-                eprintln!("[{}] erreur chiffrement vers {}: {:?}", name, dest, e);
+                eprintln!("[{}] erreur chiffrement vers {}: {:?}", name, 
+dest, e);
                 eprintln!(
-                    "[{}] astuce: si tu n'as jamais recu de message de {}, utilise 
-'khimy connect' d'abord",
+                    "[{}] astuce: si tu n'as jamais recu de message de {}, 
+utilise 'khimy connect' d'abord",
                     name, dest
                 );
             }
