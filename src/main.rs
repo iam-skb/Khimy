@@ -57,14 +57,34 @@ fn main() -> io::Result<()> {
             if args.len() < 5 { usage(); }
             run_chat(&args[2], &args[3], &args[4])
         }
-        "connect" => {
+        "connect" => loop {
             let (addr, name, dest) = interactive_prompt()?;
-            run_chat(&addr, &name, &dest)
-        }
-        "listen" => {
+            match run_chat(&addr, &name, &dest) {
+                Ok(()) => break Ok(()),
+                Err(e) if is_pseudo_taken(&e) => {
+                    clear_default_pseudo();
+                    eprintln!();
+                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                    eprintln!();
+                    continue;
+                }
+                Err(e) => break Err(e),
+            }
+        },
+        "listen" => loop {
             let (addr, name) = interactive_prompt_listen()?;
-            run_listen(&addr, &name)
-        }
+            match run_listen(&addr, &name) {
+                Ok(()) => break Ok(()),
+                Err(e) if is_pseudo_taken(&e) => {
+                    clear_default_pseudo();
+                    eprintln!();
+                    eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                    eprintln!();
+                    continue;
+                }
+                Err(e) => break Err(e),
+            }
+        },
         "config" => {
             let path = config::path_string();
             let cfg = config::load();
@@ -75,6 +95,29 @@ fn main() -> io::Result<()> {
         }
         "tui" => tui::run(),
         _ => usage(),
+    }
+}
+
+fn is_pseudo_taken(e: &io::Error) -> bool {
+    e.to_string().contains("pseudo deja pris")
+}
+
+fn clear_default_pseudo() {
+    let cfg = config::load();
+    let new_cfg = config::Config {
+        relay: cfg.relay,
+        pseudo: None,
+    };
+    let _ = config::save(&new_cfg);
+}
+
+fn save_config(addr: &str, name: &str) {
+    let new_cfg = config::Config {
+        relay: Some(addr.to_string()),
+        pseudo: Some(name.to_string()),
+    };
+    if let Err(e) = config::save(&new_cfg) {
+        eprintln!("[config] avertissement: {}", e);
     }
 }
 
@@ -117,14 +160,6 @@ fn interactive_prompt() -> io::Result<(String, String, String)> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "destinataire vide"));
     }
 
-    let new_cfg = config::Config {
-        relay: Some(addr.clone()),
-        pseudo: Some(name.clone()),
-    };
-    if let Err(e) = config::save(&new_cfg) {
-        eprintln!("[config] avertissement: {}", e);
-    }
-
     println!();
     Ok((addr, name, dest))
 }
@@ -159,20 +194,13 @@ fn interactive_prompt_listen() -> io::Result<(String, String)> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "pseudo vide"));
     }
 
-    let new_cfg = config::Config {
-        relay: Some(addr.clone()),
-        pseudo: Some(name.clone()),
-    };
-    if let Err(e) = config::save(&new_cfg) {
-        eprintln!("[config] avertissement: {}", e);
-    }
-
     println!();
     Ok((addr, name))
 }
 
 fn make_store(keys: &keys::GeneratedKeys) -> InMemoryStores {
-    let store = InMemoryStores::new(keys.identity_key_pair.clone(), keys.registration_id);
+    let store = InMemoryStores::new(keys.identity_key_pair.clone(), 
+keys.registration_id);
     store
         .signed_pre_keys
         .lock()
@@ -244,9 +272,14 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
     persist::load_all(&store, name);
 
     let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
-    let dest_address = ProtocolAddress::new(dest.to_string(), DeviceId::new(1).unwrap());
+    let dest_address = ProtocolAddress::new(dest.to_string(), 
+DeviceId::new(1).unwrap());
 
     let mut client = Client::connect(addr, name)?;
+
+    // Connexion reussie : sauvegarde la config pour la prochaine fois
+    save_config(addr, name);
+
     println!("[{}] connecte a {}", name, addr);
 
     let bundle = build_bundle(&keys);
@@ -261,7 +294,8 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
         match kind {
             KIND_BUNDLE => {
                 let bundle = deserialize_bundle(&payload)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, 
+format!("{:?}", e)))?;
                 println!("[{}] bundle de {} recu", name, from);
                 break bundle;
             }
@@ -322,9 +356,11 @@ fn run_chat(addr: &str, name: &str, dest: &str) -> io::Result<()> {
                         println!("[{}] bundle recu de {}", listen_name, from);
                     } else if kind == KIND_CIPHERTEXT {
                         let from_addr =
-                            ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
+                            ProtocolAddress::new(from.clone(), 
+DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
-                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, &mut rng)
+                        match try_decrypt(&mut s, &listen_my_address, &from_addr, 
+&payload, &mut rng)
                         {
                             Ok(text) => {
                                 notify::message(&from, &text);
@@ -386,6 +422,10 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
     let my_address = ProtocolAddress::new(name.to_string(), DeviceId::new(1).unwrap());
 
     let mut client = Client::connect(addr, name)?;
+
+    // Connexion reussie : sauvegarde la config
+    save_config(addr, name);
+
     println!("[{}] connecte a {}", name, addr);
 
     let bundle = build_bundle(&keys);
@@ -423,9 +463,11 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
                     }
                     if kind == KIND_CIPHERTEXT {
                         let from_addr =
-                            ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
+                            ProtocolAddress::new(from.clone(), 
+DeviceId::new(1).unwrap());
                         let mut s = listen_store.lock().unwrap();
-                        match try_decrypt(&mut s, &listen_my_address, &from_addr, &payload, &mut rng)
+                        match try_decrypt(&mut s, &listen_my_address, &from_addr, 
+&payload, &mut rng)
                         {
                             Ok(text) => {
                                 notify::message(&from, &text);
@@ -522,7 +564,8 @@ fn run_listen(addr: &str, name: &str) -> io::Result<()> {
             Err(e) => {
                 eprintln!("[{}] erreur chiffrement vers {}: {:?}", name, dest, e);
                 eprintln!(
-                    "[{}] astuce: si tu n'as jamais recu de message de {}, utilise 'khimy connect' d'abord",
+                    "[{}] astuce: si tu n'as jamais recu de message de {}, utilise 
+'khimy connect' d'abord",
                     name, dest
                 );
             }

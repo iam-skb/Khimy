@@ -2,10 +2,11 @@
 
 use std::io;
 use std::net::TcpStream;
+use std::time::Duration;
 
 use crate::network::{
     decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE,
-    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_FETCH_PENDING,
+    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_ERROR, KIND_FETCH_PENDING, KIND_OK,
 };
 
 pub struct Client {
@@ -14,10 +15,37 @@ pub struct Client {
 }
 
 impl Client {
+    /// Se connecte et attend la confirmation du relay (OK ou ERROR).
+    /// Si le relay refuse (pseudo deja pris), retourne une erreur claire.
     pub fn connect(addr: &str, name: &str) -> io::Result<Self> {
         let mut stream = TcpStream::connect(addr)?;
         send_frame(&mut stream, name.as_bytes())?;
-        Ok(Client { stream, name: name.to_string() })
+
+        // Handshake : le relay doit repondre OK ou ERROR immediatement.
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        let frame_result = recv_frame(&mut stream);
+        stream.set_read_timeout(None)?;
+        let frame = frame_result?;
+
+        let (kind, _from, payload) = decode_envelope(&frame)?;
+        match kind {
+            KIND_OK => {}
+            KIND_ERROR => {
+                let msg = String::from_utf8_lossy(&payload).to_string();
+                return Err(io::Error::new(io::ErrorKind::Other, msg));
+            }
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("reponse inattendue du relay: 0x{:02x}", other),
+                ));
+            }
+        }
+
+        Ok(Client {
+            stream,
+            name: name.to_string(),
+        })
     }
 
     pub fn publish_bundle(&mut self, bundle_bytes: &[u8]) -> io::Result<()> {

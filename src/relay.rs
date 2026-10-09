@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::network::{
     decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE,
-    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_ERROR, KIND_FETCH_PENDING,
+    KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_ERROR, KIND_FETCH_PENDING, KIND_OK,
 };
 
 const MAX_PENDING_PER_USER: usize = 100;
@@ -106,6 +106,10 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
         state: Arc::clone(&state),
     };
 
+    // Confirme au client que le pseudo est accepte.
+    let ok_env = encode_envelope(KIND_OK, &name, &[]);
+    send_frame(&mut stream, &ok_env)?;
+
     loop {
         let frame = match recv_frame(&mut stream) {
             Ok(f) => f,
@@ -164,7 +168,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                         let env = encode_envelope(KIND_BUNDLE, &name, &bundle);
                         if let Some(w) = st.clients.get_mut(requester) {
                             let _ = send_frame(w, &env);
-                            println!("[relay] bundle de {} envoye a {}", name, requester);
+                            println!("[relay] bundle de {} envoye a {}", name, 
+requester);
                         }
                     }
                 }
@@ -182,7 +187,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                     // Destinataire hors-ligne : stocke pour plus tard
                     let now = now_secs();
                     let entry = st.pending.entry(dest.clone()).or_default();
-                    entry.retain(|m| now.saturating_sub(m.timestamp) < PENDING_TTL_SECS);
+                    entry.retain(|m| now.saturating_sub(m.timestamp) < 
+PENDING_TTL_SECS);
                     if entry.len() < MAX_PENDING_PER_USER {
                         entry.push(PendingMessage {
                             from: name.clone(),
@@ -197,7 +203,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                         );
                     } else {
                         eprintln!(
-                            "[relay] boite pleine pour {} ({} max), message de {} rejete",
+                            "[relay] boite pleine pour {} ({} max), message de {} 
+rejete",
                             dest, MAX_PENDING_PER_USER, name
                         );
                     }
@@ -213,7 +220,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                     if let Some(w) = st.clients.get_mut(&name) {
                         for msg in list {
                             let env =
-                                encode_envelope(KIND_CIPHERTEXT, &msg.from, &msg.payload);
+                                encode_envelope(KIND_CIPHERTEXT, &msg.from, 
+&msg.payload);
                             let _ = send_frame(w, &env);
                         }
                     }

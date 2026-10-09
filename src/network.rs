@@ -34,6 +34,7 @@ pub const KIND_BUNDLE: u8 = 0x02;
 pub const KIND_CIPHERTEXT: u8 = 0x03;
 pub const KIND_ERROR: u8 = 0x04;
 pub const KIND_FETCH_PENDING: u8 = 0x05;
+pub const KIND_OK: u8 = 0x06;
 
 pub fn encode_envelope(kind: u8, dest: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + 4 + dest.len() + 4 + payload.len());
@@ -108,7 +109,8 @@ pub fn serialize_bundle(b: &PreKeyBundle) -> Result<Vec<u8>, SignalProtocolError
 pub fn deserialize_bundle(buf: &[u8]) -> Result<PreKeyBundle, SignalProtocolError> {
     let mut p = 0usize;
 
-    fn take<'a>(buf: &'a [u8], p: &mut usize, n: usize) -> Result<&'a [u8], SignalProtocolError> {
+    fn take<'a>(buf: &'a [u8], p: &mut usize, n: usize) -> Result<&'a [u8], 
+SignalProtocolError> {
         if *p + n > buf.len() {
             return Err(SignalProtocolError::InvalidProtobufEncoding);
         }
@@ -126,22 +128,27 @@ pub fn deserialize_bundle(buf: &[u8]) -> Result<PreKeyBundle, SignalProtocolErro
 
     let has_pre = take(buf, &mut p, 1)?[0] == 1;
     let pre_key = if has_pre {
-        let id = PreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()));
+        let id = PreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 
+4)?.try_into().unwrap()));
         let pk = PublicKey::deserialize(take(buf, &mut p, 33)?)?;
         Some((id, pk))
     } else {
         None
     };
 
-    let spk_id = SignedPreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()));
+    let spk_id = SignedPreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 
+4)?.try_into().unwrap()));
     let spk_pub = PublicKey::deserialize(take(buf, &mut p, 33)?)?;
-    let spk_sig_len = u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()) as usize;
+    let spk_sig_len = u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()) as 
+usize;
     let spk_sig = take(buf, &mut p, spk_sig_len)?.to_vec();
 
-    let kpk_id = KyberPreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()));
+    let kpk_id = KyberPreKeyId::from(u32::from_be_bytes(take(buf, &mut p, 
+4)?.try_into().unwrap()));
     let kpk_pub = kem::PublicKey::deserialize(take(buf, &mut p, 1 + 1568)?)
         .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
-    let kpk_sig_len = u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()) as usize;
+    let kpk_sig_len = u32::from_be_bytes(take(buf, &mut p, 4)?.try_into().unwrap()) as 
+usize;
     let kpk_sig = take(buf, &mut p, kpk_sig_len)?.to_vec();
 
     let id_key = IdentityKey::decode(take(buf, &mut p, 33)?)?;
