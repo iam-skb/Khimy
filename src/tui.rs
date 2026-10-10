@@ -33,7 +33,6 @@ use crate::stores::InMemoryStores;
 
 type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 
-// --- Palette rose pastel (256 couleurs) ---
 const PINK:        Color = Color::Indexed(218);
 const PINK_BRIGHT: Color = Color::Indexed(224);
 const PINK_DIM:    Color = Color::Indexed(175);
@@ -51,7 +50,6 @@ const BANNER: &[&str] = &[
     " ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝     ╚═╝    ╚═╝   ",
 ];
 
-// ─── Messages ───────────────────────────────────────────────
 struct Message {
     time: String,
     from: String,
@@ -73,6 +71,7 @@ struct App {
     messages: Vec<Message>,
     input: String,
     should_quit: bool,
+    pending_switch: Option<String>,
 }
 
 impl App {
@@ -97,6 +96,7 @@ impl App {
             ],
             input: String::new(),
             should_quit: false,
+            pending_switch: None,
         }
     }
 
@@ -121,14 +121,13 @@ fn now_short() -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
-// ─── Événements venant du thread réseau ─────────────────────
 enum UiEvent {
     Message { from: String, text: String },
+    BundleReceived { from: String, payload: Vec<u8> },
     Error(String),
     Disconnected,
 }
 
-// ─── Setup (avant le mode raw) ──────────────────────────────
 fn setup_prompt() -> io::Result<(String, String, String)> {
     let cfg = config::load();
 
@@ -167,6 +166,12 @@ fn setup_prompt() -> io::Result<(String, String, String)> {
     if dest.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "destinataire vide"));
     }
+    if dest == name {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destinataire identique au pseudo",
+        ));
+    }
 
     let new_cfg = config::Config {
         relay: Some(addr.clone()),
@@ -187,7 +192,6 @@ fn clear_default_pseudo() {
     let _ = config::save(&new_cfg);
 }
 
-// ─── Helpers store/bundle (dupliqués de main.rs) ────────────
 fn make_store(keys: &keys::GeneratedKeys) -> InMemoryStores {
     let store = InMemoryStores::new(keys.identity_key_pair.clone(), keys.registration_id);
     store
@@ -253,7 +257,6 @@ fn try_decrypt(
     ))
 }
 
-// ─── Point d'entrée ─────────────────────────────────────────
 pub fn run() -> io::Result<()> {
     loop {
         let (relay, pseudo, dest) = setup_prompt()?;
@@ -303,14 +306,12 @@ fn run_with_client(
 
     println!("[{}] connecte a {}", pseudo, relay);
 
-    // Publie notre bundle
     let bundle = build_bundle(&keys);
     let bundle_bytes = serialize_bundle(&bundle)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
     client.publish_bundle(&bundle_bytes)?;
     println!("[{}] bundle publie", pseudo);
 
-    // Demande le bundle du destinataire, avec timeout de 5 s.
     client.request_bundle(&dest)?;
     let dest_bundle = loop {
         match client.recv_timeout(Duration::from_secs(5))? {
@@ -328,9 +329,7 @@ fn run_with_client(
                     format!("relay: {}", msg),
                 ));
             }
-            Some((KIND_CIPHERTEXT, _, _)) => {
-                // Ignore : on attend le bundle.
-            }
+            Some((KIND_CIPHERTEXT, _, _)) => {}
             Some((kind, _, _)) => {
                 eprintln!("[{}] kind inattendu: 0x{:02x}", pseudo, kind);
             }
@@ -349,7 +348,7 @@ fn run_with_client(
     };
 
     let my_address = ProtocolAddress::new(pseudo.clone(), DeviceId::new(1).unwrap());
-    let dest_address = ProtocolAddress::new(dest.clone(), DeviceId::new(1).unwrap());
+    let mut dest_address = ProtocolAddress::new(dest.clone(), DeviceId::new(1).unwrap());
     let mut rng = rand::rng();
 
     futures::executor::block_on(session::establish_session(
@@ -366,8 +365,8 @@ fn run_with_client(
 
     let store = Arc::new(Mutex::new(store));
 
-    // Thread réseau
     let (tx, rx) = mpsc::channel::<UiEvent>();
+
     let stream_reader = client.stream.try_clone()?;
     let reader_store = Arc::clone(&store);
     let reader_my = my_address.clone();
@@ -376,12 +375,10 @@ fn run_with_client(
         reader_loop(stream_reader, reader_store, reader_my, reader_name, tx);
     });
 
-    // Récupère les messages hors-ligne
     if let Err(e) = client.fetch_pending() {
         eprintln!("[{}] avertissement fetch pending: {}", pseudo, e);
     }
 
-    // Mode raw
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -396,7 +393,7 @@ fn run_with_client(
         &mut client,
         &store,
         &my_address,
-        &dest_address,
+        &mut dest_address,
         &rx,
     );
 
@@ -411,7 +408,6 @@ fn run_with_client(
     Ok(())
 }
 
-// ─── Boucle réseau ──────────────────────────────────────────
 fn reader_loop(
     mut stream: std::net::TcpStream,
     store: Arc<Mutex<InMemoryStores>>,
@@ -442,6 +438,8 @@ fn reader_loop(
                             )));
                         }
                     }
+                } else if kind == KIND_BUNDLE {
+                    let _ = tx.send(UiEvent::BundleReceived { from, payload });
                 } else if kind == KIND_ERROR {
                     let msg = String::from_utf8_lossy(&payload).to_string();
                     let _ = tx.send(UiEvent::Error(format!("relay: {}", msg)));
@@ -456,7 +454,6 @@ fn reader_loop(
     }
 }
 
-// ─── Commandes ──────────────────────────────────────────────
 fn handle_command(app: &mut App, line: &str) -> bool {
     match line {
         "/quit" | "/q" => {
@@ -468,7 +465,7 @@ fn handle_command(app: &mut App, line: &str) -> bool {
             true
         }
         "/help" => {
-            let text = "/quit   /clear   /help   /status   /banner";
+            let text = "/quit   /clear   /help   /status   /to <nom>   /banner";
             app.push(MsgKind::System, "", text);
             true
         }
@@ -488,14 +485,13 @@ fn handle_command(app: &mut App, line: &str) -> bool {
     }
 }
 
-// ─── Boucle principale TUI ──────────────────────────────────
 fn run_app(
     terminal: &mut Tui,
     app: &mut App,
     client: &mut Client,
     store: &Arc<Mutex<InMemoryStores>>,
     my_address: &ProtocolAddress,
-    dest_address: &ProtocolAddress,
+    dest_address: &mut ProtocolAddress,
     rx: &mpsc::Receiver<UiEvent>,
 ) -> io::Result<()> {
     let mut rng = rand::rng();
@@ -503,11 +499,56 @@ fn run_app(
     loop {
         terminal.draw(|f| ui(f, app))?;
 
-        // Événements du thread réseau
         loop {
             match rx.try_recv() {
                 Ok(UiEvent::Message { from, text }) => {
                     app.push(MsgKind::Other, &from, &text);
+                }
+                Ok(UiEvent::BundleReceived { from, payload }) => {
+                    if app.pending_switch.as_deref() == Some(from.as_str()) {
+                        match deserialize_bundle(&payload) {
+                            Ok(bundle) => {
+                                let new_addr = ProtocolAddress::new(
+                                    from.clone(),
+                                    DeviceId::new(1).unwrap(),
+                                );
+                                let est = {
+                                    let mut s = store.lock().unwrap();
+                                    futures::executor::block_on(session::establish_session(
+                                        &mut s,
+                                        my_address,
+                                        &new_addr,
+                                        &bundle,
+                                        &mut rng,
+                                    ))
+                                };
+                                match est {
+                                    Ok(()) => {
+                                        {
+                                            let s = store.lock().unwrap();
+                                            persist::save_all(&s, &app.pseudo);
+                                        }
+                                        app.dest = from.clone();
+                                        *dest_address = new_addr;
+                                        let msg = format!("session etablie avec {}", from);
+                                        app.push(MsgKind::System, "", &msg);
+                                    }
+                                    Err(e) => {
+                                        let msg = format!(
+                                            "erreur session avec {} : {:?}",
+                                            from, e
+                                        );
+                                        app.push(MsgKind::System, "", &msg);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let msg = format!("bundle invalide de {} : {:?}", from, e);
+                                app.push(MsgKind::System, "", &msg);
+                            }
+                        }
+                        app.pending_switch = None;
+                    }
                 }
                 Ok(UiEvent::Error(msg)) => {
                     app.push(MsgKind::System, "", &msg);
@@ -537,11 +578,46 @@ fn run_app(
                             if line.is_empty() {
                                 continue;
                             }
+
+                            if let Some(rest) = line.strip_prefix("/to ") {
+                                let new_dest = rest.trim().to_string();
+                                if new_dest.is_empty() {
+                                    app.push(MsgKind::System, "", "usage: /to <nom>");
+                                    continue;
+                                }
+                                if new_dest == app.pseudo {
+                                    let msg = format!("impossible : tu es deja {}", new_dest);
+                                    app.push(MsgKind::System, "", &msg);
+                                    continue;
+                                }
+                                if new_dest == app.dest {
+                                    let msg = format!("deja en conversation avec {}", new_dest);
+                                    app.push(MsgKind::System, "", &msg);
+                                    continue;
+                                }
+                                if app.pending_switch.is_some() {
+                                    app.push(
+                                        MsgKind::System,
+                                        "",
+                                        "changement deja en cours, attends...",
+                                    );
+                                    continue;
+                                }
+                                if let Err(e) = client.request_bundle(&new_dest) {
+                                    let msg = format!("erreur envoi : {}", e);
+                                    app.push(MsgKind::System, "", &msg);
+                                    continue;
+                                }
+                                let msg = format!("changement vers {}...", new_dest);
+                                app.push(MsgKind::System, "", &msg);
+                                app.pending_switch = Some(new_dest);
+                                continue;
+                            }
+
                             if handle_command(app, &line) {
                                 continue;
                             }
 
-                            // Chiffre et envoie
                             let ct = {
                                 let mut s = store.lock().unwrap();
                                 futures::executor::block_on(session::encrypt_message(
@@ -584,14 +660,11 @@ fn run_app(
     Ok(())
 }
 
-// ─── Rendu ──────────────────────────────────────────────────
 fn ui(f: &mut ratatui::Frame, app: &App) {
     let area = f.area();
-
     f.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
     let banner_height = BANNER.len() as u16;
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -603,7 +676,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         ])
         .split(area);
 
-    // Banner
     let mut banner_lines: Vec<Line> = Vec::new();
     for (i, line) in BANNER.iter().enumerate() {
         let color = match i {
@@ -638,7 +710,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         chunks[0],
     );
 
-    // Séparateur
     let sep_width = area.width as usize;
     let sep = Line::from(Span::styled(
         "-".repeat(sep_width),
@@ -646,7 +717,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     ));
     f.render_widget(Paragraph::new(sep), chunks[1]);
 
-    // Messages
     let visible_height = chunks[2].height as usize;
     let start = app.messages.len().saturating_sub(visible_height);
 
@@ -691,14 +761,12 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     f.render_widget(List::new(items).style(Style::default().bg(BG)), chunks[2]);
 
-    // Séparateur 2
     let sep2 = Line::from(Span::styled(
         "-".repeat(sep_width),
         Style::default().fg(PINK_DEEP),
     ));
     f.render_widget(Paragraph::new(sep2), chunks[3]);
 
-    // Input
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(PINK_DIM))
