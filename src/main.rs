@@ -79,6 +79,14 @@ fn main() -> io::Result<()> {
                     eprintln!();
                     continue;
                 }
+                Err(e) if is_relay_unreachable(&e) => {
+                    eprintln!();
+                    eprintln!("  {}", e);
+                    eprintln!("  Verifie l'adresse du relay, ou lance-en un en local :");
+                    eprintln!("      khimy relay 127.0.0.1:9000");
+                    eprintln!();
+                    continue;
+                }
                 Err(e) => break Err(e),
             }
         },
@@ -90,6 +98,14 @@ fn main() -> io::Result<()> {
                     clear_default_pseudo();
                     eprintln!();
                     eprintln!("  Ce pseudo est deja utilise. Choisis-en un autre.");
+                    eprintln!();
+                    continue;
+                }
+                Err(e) if is_relay_unreachable(&e) => {
+                    eprintln!();
+                    eprintln!("  {}", e);
+                    eprintln!("  Verifie l'adresse du relay, ou lance-en un en local :");
+                    eprintln!("      khimy relay 127.0.0.1:9000");
                     eprintln!();
                     continue;
                 }
@@ -115,6 +131,10 @@ fn is_pseudo_taken(e: &io::Error) -> bool {
 
 fn is_dest_offline(e: &io::Error) -> bool {
     e.to_string().contains("n'est pas connecte")
+}
+
+fn is_relay_unreachable(e: &io::Error) -> bool {
+    e.to_string().contains("relay injoignable")
 }
 
 fn clear_default_pseudo() {

@@ -16,7 +16,12 @@ pub struct Client {
 
 impl Client {
     pub fn connect(addr: &str, name: &str) -> io::Result<Self> {
-        let mut stream = TcpStream::connect(addr)?;
+        let mut stream = TcpStream::connect(addr).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("relay injoignable ({})", e),
+            )
+        })?;
         send_frame(&mut stream, name.as_bytes())?;
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -64,7 +69,6 @@ impl Client {
         let env = encode_envelope(KIND_FETCH_PENDING, &self.name, &[]);
         send_frame(&mut self.stream, &env)
     }
-
 
     pub fn recv_timeout(
         &mut self,

@@ -267,6 +267,14 @@ pub fn run() -> io::Result<()> {
                 eprintln!();
                 continue;
             }
+            Err(e) if e.to_string().contains("relay injoignable") => {
+                eprintln!();
+                eprintln!("  {}", e);
+                eprintln!("  Verifie l'adresse du relay, ou lance-en un en local :");
+                eprintln!("      khimy relay 127.0.0.1:9000");
+                eprintln!();
+                continue;
+            }
             Err(e) => return Err(e),
         };
 
