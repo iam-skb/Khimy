@@ -4,8 +4,7 @@ Chat chiffre de bout en bout (E2EE) en Rust, base sur le protocole Signal.
 
 ## Ce que c'est
 
-Khimy implemente les memes primitives cryptographiques que Signal utilise 
-en production :
+Khimy implemente les memes primitives cryptographiques que Signal utilise en production :
 
 - **X3DH** pour l'etablissement de session
 - **Double Ratchet** pour le forward secrecy
@@ -14,8 +13,7 @@ en production :
 - **Persistance des sessions** sur disque
 - **Messages hors-ligne** (stockage temporaire cote relay)
 - **Notifications** (bip terminal + notification native macOS/Linux)
-- Une **interface TUI** rose pastel (Ratatui) : lance `khimy` et c'est 
-parti
+- Une **interface TUI** rose pastel (Ratatui) : lance `khimy` et c'est parti
 
 Le ciphertext fait ~1792 octets pour un message de 40 caracteres.
 
@@ -49,8 +47,7 @@ Prerequis : Rust >= 1.80, `protoc` >= 28.
 
 ### Script automatique
 
-    bash <(curl -s 
-https://raw.githubusercontent.com/iam-skb/Khimy/main/install.sh)
+    bash <(curl -s https://raw.githubusercontent.com/iam-skb/Khimy/main/install.sh)
 
 ## Utilisation
 
