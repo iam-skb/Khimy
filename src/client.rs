@@ -65,10 +65,6 @@ impl Client {
         send_frame(&mut self.stream, &env)
     }
 
-    pub fn recv(&mut self) -> io::Result<(u8, String, Vec<u8>)> {
-        let frame = recv_frame(&mut self.stream)?;
-        decode_envelope(&frame)
-    }
 
     pub fn recv_timeout(
         &mut self,
