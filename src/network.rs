@@ -166,3 +166,100 @@ usize;
         id_key,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_roundtrip_simple() {
+        let env = encode_envelope(KIND_BUNDLE, "alice", b"hello");
+        let (kind, dest, payload) = decode_envelope(&env).unwrap();
+        assert_eq!(kind, KIND_BUNDLE);
+        assert_eq!(dest, "alice");
+        assert_eq!(payload, b"hello");
+    }
+
+    #[test]
+    fn envelope_roundtrip_empty_payload() {
+        let env = encode_envelope(KIND_OK, "bob", b"");
+        let (kind, dest, payload) = decode_envelope(&env).unwrap();
+        assert_eq!(kind, KIND_OK);
+        assert_eq!(dest, "bob");
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn envelope_roundtrip_empty_dest() {
+        let env = encode_envelope(KIND_ERROR, "", b"oops");
+        let (kind, dest, payload) = decode_envelope(&env).unwrap();
+        assert_eq!(kind, KIND_ERROR);
+        assert_eq!(dest, "");
+        assert_eq!(payload, b"oops");
+    }
+
+    #[test]
+    fn envelope_roundtrip_large_payload() {
+        let big = vec![0xABu8; 100_000];
+        let env = encode_envelope(KIND_CIPHERTEXT, "carole", &big);
+        let (kind, dest, payload) = decode_envelope(&env).unwrap();
+        assert_eq!(kind, KIND_CIPHERTEXT);
+        assert_eq!(dest, "carole");
+        assert_eq!(payload, big);
+    }
+
+    #[test]
+    fn envelope_roundtrip_unicode_dest() {
+        let env = encode_envelope(KIND_BUNDLE_REQUEST, "alice-mimi", b"x");
+        let (kind, dest, payload) = decode_envelope(&env).unwrap();
+        assert_eq!(kind, KIND_BUNDLE_REQUEST);
+        assert_eq!(dest, "alice-mimi");
+        assert_eq!(payload, b"x");
+    }
+
+    #[test]
+    fn envelope_decode_too_short() {
+        let result = decode_envelope(&[0x02, 0x00]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn envelope_decode_truncated_dest() {
+        let buf = vec![0x02, 0, 0, 0, 10];
+        assert!(decode_envelope(&buf).is_err());
+    }
+
+    #[test]
+    fn envelope_decode_truncated_payload() {
+        let mut buf = vec![0x02, 0, 0, 0, 3];
+        buf.extend_from_slice(b"abc");
+        buf.extend_from_slice(&100u32.to_be_bytes());
+        assert!(decode_envelope(&buf).is_err());
+    }
+
+    #[test]
+    fn envelope_decode_non_utf8_dest() {
+        let mut buf = vec![0x02, 0, 0, 0, 2];
+        buf.extend_from_slice(&[0xFF, 0xFE]);
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        assert!(decode_envelope(&buf).is_err());
+    }
+
+    #[test]
+    fn envelope_all_kinds_roundtrip() {
+        for kind in [
+            KIND_BUNDLE_REQUEST,
+            KIND_BUNDLE,
+            KIND_CIPHERTEXT,
+            KIND_ERROR,
+            KIND_FETCH_PENDING,
+            KIND_OK,
+        ] {
+            let env = encode_envelope(kind, "x", b"y");
+            let (k2, d2, p2) = decode_envelope(&env).unwrap();
+            assert_eq!(k2, kind);
+            assert_eq!(d2, "x");
+            assert_eq!(p2, b"y");
+        }
+    }
+}

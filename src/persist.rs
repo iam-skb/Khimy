@@ -164,3 +164,43 @@ pub fn load_all(store: &InMemoryStores, name: &str) {
         eprintln!("[{}] erreur chargement identites: {}", name, e);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn write_read_bytes_roundtrip() {
+        let mut buf = Vec::new();
+        write_bytes(&mut buf, b"hello").unwrap();
+        write_bytes(&mut buf, b"world").unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        assert_eq!(read_bytes(&mut cursor).unwrap(), b"hello");
+        assert_eq!(read_bytes(&mut cursor).unwrap(), b"world");
+    }
+
+    #[test]
+    fn write_read_bytes_empty() {
+        let mut buf = Vec::new();
+        write_bytes(&mut buf, b"").unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        assert_eq!(read_bytes(&mut cursor).unwrap(), b"");
+    }
+
+    #[test]
+    fn read_bytes_truncated_len() {
+        let buf = vec![0, 0];
+        let mut cursor = Cursor::new(buf);
+        assert!(read_bytes(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn read_bytes_truncated_data() {
+        let buf = vec![0, 0, 0, 10, 1, 2];
+        let mut cursor = Cursor::new(buf);
+        assert!(read_bytes(&mut cursor).is_err());
+    }
+}
