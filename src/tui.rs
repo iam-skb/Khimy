@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -111,14 +111,7 @@ impl App {
 }
 
 fn now_short() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
-    let s = secs % 60;
-    format!("{:02}:{:02}:{:02}", h, m, s)
+    chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
 enum UiEvent {
