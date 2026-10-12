@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::network::{
-    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_BUNDLE,
+    decode_envelope, encode_envelope, recv_frame, send_frame, KIND_ACK, KIND_BUNDLE,
     KIND_BUNDLE_REQUEST, KIND_CIPHERTEXT, KIND_ERROR, KIND_FETCH_PENDING, KIND_OK,
 };
 
@@ -106,7 +106,6 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
         state: Arc::clone(&state),
     };
 
-    // Confirme au client que le pseudo est accepte.
     let ok_env = encode_envelope(KIND_OK, &name, &[]);
     send_frame(&mut stream, &ok_env)?;
 
@@ -148,10 +147,8 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
             KIND_BUNDLE => {
                 let mut st = state.lock().unwrap();
 
-                // Sauvegarde le bundle
                 st.bundles.insert(name.clone(), payload);
 
-                // Notifie les clients en attente
                 let mut still_waiting = Vec::new();
                 let mut to_notify = Vec::new();
                 for (requester, target) in st.waiting.drain(..) {
@@ -168,8 +165,7 @@ fn handle_client(mut stream: TcpStream, state: Shared) -> io::Result<()> {
                         let env = encode_envelope(KIND_BUNDLE, &name, &bundle);
                         if let Some(w) = st.clients.get_mut(requester) {
                             let _ = send_frame(w, &env);
-                            println!("[relay] bundle de {} envoye a {}", name, 
-requester);
+                            println!("[relay] bundle de {} envoye a {}", name, requester);
                         }
                     }
                 }
@@ -178,17 +174,14 @@ requester);
             KIND_CIPHERTEXT => {
                 let mut st = state.lock().unwrap();
                 if let Some(target) = st.clients.get_mut(&dest) {
-                    // Destinataire connecte : envoi direct
                     let env = encode_envelope(KIND_CIPHERTEXT, &name, &payload);
                     if send_frame(target, &env).is_err() {
                         st.clients.remove(&dest);
                     }
                 } else {
-                    // Destinataire hors-ligne : stocke pour plus tard
                     let now = now_secs();
                     let entry = st.pending.entry(dest.clone()).or_default();
-                    entry.retain(|m| now.saturating_sub(m.timestamp) < 
-PENDING_TTL_SECS);
+                    entry.retain(|m| now.saturating_sub(m.timestamp) < PENDING_TTL_SECS);
                     if entry.len() < MAX_PENDING_PER_USER {
                         entry.push(PendingMessage {
                             from: name.clone(),
@@ -203,8 +196,7 @@ PENDING_TTL_SECS);
                         );
                     } else {
                         eprintln!(
-                            "[relay] boite pleine pour {} ({} max), message de {} 
-rejete",
+                            "[relay] boite pleine pour {} ({} max), message de {} rejete",
                             dest, MAX_PENDING_PER_USER, name
                         );
                     }
@@ -212,16 +204,13 @@ rejete",
             }
 
             KIND_FETCH_PENDING => {
-                // Le client demande ses messages en attente
                 let msgs = state.lock().unwrap().pending.remove(&name);
                 if let Some(list) = msgs {
                     let count = list.len();
                     let mut st = state.lock().unwrap();
                     if let Some(w) = st.clients.get_mut(&name) {
                         for msg in list {
-                            let env =
-                                encode_envelope(KIND_CIPHERTEXT, &msg.from, 
-&msg.payload);
+                            let env = encode_envelope(KIND_CIPHERTEXT, &msg.from, &msg.payload);
                             let _ = send_frame(w, &env);
                         }
                     }
@@ -229,6 +218,15 @@ rejete",
                         println!("[relay] {} message(s) livre(s) a {}", count, name);
                     }
                 }
+            }
+
+            KIND_ACK => {
+                let mut st = state.lock().unwrap();
+                if let Some(target) = st.clients.get_mut(&dest) {
+                    let env = encode_envelope(KIND_ACK, &name, &payload);
+                    let _ = send_frame(target, &env);
+                }
+                // Si le destinataire est offline, l'ack est perdu. Pas grave.
             }
 
             _ => eprintln!("[relay] kind inconnu: 0x{:02x}", kind),

@@ -20,6 +20,7 @@ use ratatui::{
     Terminal,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use libsignal_protocol::*;
 
@@ -27,7 +28,8 @@ use crate::client::Client;
 use crate::config;
 use crate::keys;
 use crate::network::{
-    self, deserialize_bundle, serialize_bundle, KIND_BUNDLE, KIND_CIPHERTEXT, KIND_ERROR,
+    self, deserialize_bundle, encode_envelope, serialize_bundle, KIND_ACK, KIND_BUNDLE,
+    KIND_CIPHERTEXT, KIND_ERROR,
 };
 use crate::persist;
 use crate::session;
@@ -42,6 +44,7 @@ const PINK_DEEP:   Color = Color::Indexed(132);
 const MUTED:       Color = Color::Indexed(139);
 const TEXT:        Color = Color::Indexed(255);
 const BG:          Color = Color::Indexed(233);
+const READ_BLUE:   Color = Color::Indexed(117);
 
 const MAX_MESSAGES: usize = 500;
 
@@ -54,12 +57,39 @@ const BANNER: &[&str] = &[
     " ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝     ╚═╝    ╚═╝   ",
 ];
 
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct WireMessage {
+    id: String,
+    text: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AckPayload {
+    id: String,
+    kind: String, // "delivered" ou "read"
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+enum MsgStatus {
+    Sent,
+    Delivered,
+    Read,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct Message {
     time: String,
     from: String,
     text: String,
     kind: MsgKind,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default = "default_status")]
+    status: MsgStatus,
+}
+
+fn default_status() -> MsgStatus {
+    MsgStatus::Sent
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -123,12 +153,16 @@ fn welcome_messages() -> Vec<Message> {
             from: String::new(),
             text: "session chiffree — x3dh + double ratchet + ml-kem-1024".to_string(),
             kind: MsgKind::System,
+            id: None,
+            status: MsgStatus::Sent,
         },
         Message {
             time: now_short(),
             from: String::new(),
             text: "/help pour les commandes, ctrl+c pour quitter".to_string(),
             kind: MsgKind::System,
+            id: None,
+            status: MsgStatus::Sent,
         },
     ]
 }
@@ -150,14 +184,51 @@ impl App {
         }
     }
 
-    fn push(&mut self, kind: MsgKind, from: &str, text: &str) {
+    fn push(&mut self, kind: MsgKind, from: &str, text: &str) -> usize {
         self.messages.push(Message {
             time: now_short(),
             from: from.to_string(),
             text: text.to_string(),
             kind,
+            id: None,
+            status: MsgStatus::Sent,
         });
         save_messages(&self.pseudo, &self.messages);
+        self.messages.len() - 1
+    }
+
+    fn push_with_id(&mut self, kind: MsgKind, from: &str, text: &str, id: Option<String>) -> usize {
+        self.messages.push(Message {
+            time: now_short(),
+            from: from.to_string(),
+            text: text.to_string(),
+            kind,
+            id,
+            status: MsgStatus::Sent,
+        });
+        save_messages(&self.pseudo, &self.messages);
+        self.messages.len() - 1
+    }
+
+    fn set_status(&mut self, id: &str, status: MsgStatus) {
+        let mut changed = false;
+        for m in self.messages.iter_mut() {
+            if m.id.as_deref() == Some(id) {
+                // On ne "rétrograde" jamais : Read > Delivered > Sent
+                let upgrade = match (m.status, status) {
+                    (MsgStatus::Sent, _) => true,
+                    (MsgStatus::Delivered, MsgStatus::Read) => true,
+                    _ => false,
+                };
+                if upgrade {
+                    m.status = status;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            save_messages(&self.pseudo, &self.messages);
+        }
     }
 
     fn clear(&mut self) {
@@ -167,8 +238,9 @@ impl App {
 }
 
 enum UiEvent {
-    Message { from: String, text: String },
+    Message { from: String, text: String, id: Option<String> },
     BundleReceived { from: String, payload: Vec<u8> },
+    Ack { id: String, kind: String },
     Error(String),
     Disconnected,
 }
@@ -413,11 +485,19 @@ fn run_with_client(
     let (tx, rx) = mpsc::channel::<UiEvent>();
 
     let stream_reader = client.stream.try_clone()?;
+    let writer_clone = client.stream.try_clone()?;
     let reader_store = Arc::clone(&store);
     let reader_my = my_address.clone();
     let reader_name = pseudo.clone();
     thread::spawn(move || {
-        reader_loop(stream_reader, reader_store, reader_my, reader_name, tx);
+        reader_loop(
+            stream_reader,
+            writer_clone,
+            reader_store,
+            reader_my,
+            reader_name,
+            tx,
+        );
     });
 
     if let Err(e) = client.fetch_pending() {
@@ -455,6 +535,7 @@ fn run_with_client(
 
 fn reader_loop(
     mut stream: std::net::TcpStream,
+    mut writer: std::net::TcpStream,
     store: Arc<Mutex<InMemoryStores>>,
     my_address: ProtocolAddress,
     my_name: String,
@@ -468,13 +549,35 @@ fn reader_loop(
                     Ok(v) => v,
                     Err(_) => continue,
                 };
+
                 if kind == KIND_CIPHERTEXT {
                     let from_addr = ProtocolAddress::new(from.clone(), DeviceId::new(1).unwrap());
                     let mut s = store.lock().unwrap();
                     match try_decrypt(&mut s, &my_address, &from_addr, &payload, &mut rng) {
-                        Ok(text) => {
+                        Ok(plain) => {
+                            // Tente de parser en JSON ; sinon c'est un vieux message texte
+                            let (id, text) = match serde_json::from_str::<WireMessage>(&plain) {
+                                Ok(w) => (Some(w.id), w.text),
+                                Err(_) => (None, plain),
+                            };
                             persist::save_all(&s, &my_name);
-                            let _ = tx.send(UiEvent::Message { from, text });
+                            drop(s);
+
+                            // Envoie ACK delivered + read (TUI ouvert = lu)
+                            if let Some(mid) = id.as_ref() {
+                                for ack_kind in ["delivered", "read"] {
+                                    let ack = AckPayload {
+                                        id: mid.clone(),
+                                        kind: ack_kind.to_string(),
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&ack) {
+                                        let env = encode_envelope(KIND_ACK, &from, json.as_bytes());
+                                        let _ = network::send_frame(&mut writer, &env);
+                                    }
+                                }
+                            }
+
+                            let _ = tx.send(UiEvent::Message { from, text, id });
                         }
                         Err(e) => {
                             let _ = tx.send(UiEvent::Error(format!(
@@ -485,6 +588,10 @@ fn reader_loop(
                     }
                 } else if kind == KIND_BUNDLE {
                     let _ = tx.send(UiEvent::BundleReceived { from, payload });
+                } else if kind == KIND_ACK {
+                    if let Ok(ack) = serde_json::from_slice::<AckPayload>(&payload) {
+                        let _ = tx.send(UiEvent::Ack { id: ack.id, kind: ack.kind });
+                    }
                 } else if kind == KIND_ERROR {
                     let msg = String::from_utf8_lossy(&payload).to_string();
                     let _ = tx.send(UiEvent::Error(format!("relay: {}", msg)));
@@ -547,8 +654,16 @@ fn run_app(
 
         loop {
             match rx.try_recv() {
-                Ok(UiEvent::Message { from, text }) => {
-                    app.push(MsgKind::Other, &from, &text);
+                Ok(UiEvent::Message { from, text, id }) => {
+                    app.push_with_id(MsgKind::Other, &from, &text, id);
+                }
+                Ok(UiEvent::Ack { id, kind }) => {
+                    let status = match kind.as_str() {
+                        "read" => MsgStatus::Read,
+                        "delivered" => MsgStatus::Delivered,
+                        _ => MsgStatus::Sent,
+                    };
+                    app.set_status(&id, status);
                 }
                 Ok(UiEvent::BundleReceived { from, payload }) => {
                     if app.pending_switch.as_deref() == Some(from.as_str()) {
@@ -664,13 +779,28 @@ fn run_app(
                                 continue;
                             }
 
+                            // Genere un id et construit le payload JSON
+                            let msg_id = Uuid::new_v4().to_string();
+                            let wire = WireMessage {
+                                id: msg_id.clone(),
+                                text: line.clone(),
+                            };
+                            let json = match serde_json::to_string(&wire) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    let msg = format!("erreur serialisation : {:?}", e);
+                                    app.push(MsgKind::System, "", &msg);
+                                    continue;
+                                }
+                            };
+
                             let ct = {
                                 let mut s = store.lock().unwrap();
                                 futures::executor::block_on(session::encrypt_message(
                                     &mut s,
                                     my_address,
                                     dest_address,
-                                    line.as_bytes(),
+                                    json.as_bytes(),
                                     &mut rng,
                                 ))
                             };
@@ -683,7 +813,12 @@ fn run_app(
                                         app.push(MsgKind::System, "", &msg);
                                     } else {
                                         let pseudo = app.pseudo.clone();
-                                        app.push(MsgKind::Mine, &pseudo, &line);
+                                        app.push_with_id(
+                                            MsgKind::Mine,
+                                            &pseudo,
+                                            &line,
+                                            Some(msg_id),
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -784,14 +919,22 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                         Style::default().fg(PINK_DIM).add_modifier(Modifier::BOLD),
                     ),
                 ]),
-                MsgKind::Mine => Line::from(vec![
-                    Span::styled(format!(" {} ", m.time), Style::default().fg(PINK_DEEP)),
-                    Span::styled(
-                        format!("{} ", m.from),
-                        Style::default().fg(PINK_BRIGHT).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(&m.text, Style::default().fg(TEXT)),
-                ]),
+                MsgKind::Mine => {
+                    let (glyph, color) = match m.status {
+                        MsgStatus::Sent => (" ✓", MUTED),
+                        MsgStatus::Delivered => (" ✓✓", MUTED),
+                        MsgStatus::Read => (" ✓✓", READ_BLUE),
+                    };
+                    Line::from(vec![
+                        Span::styled(format!(" {} ", m.time), Style::default().fg(PINK_DEEP)),
+                        Span::styled(
+                            format!("{} ", m.from),
+                            Style::default().fg(PINK_BRIGHT).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(&m.text, Style::default().fg(TEXT)),
+                        Span::styled(glyph, Style::default().fg(color)),
+                    ])
+                }
                 MsgKind::Other => Line::from(vec![
                     Span::styled(format!(" {} ", m.time), Style::default().fg(PINK_DEEP)),
                     Span::styled(
