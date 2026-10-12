@@ -1,5 +1,7 @@
 # Khimy
 
+[![tests](https://github.com/iam-skb/Khimy/actions/workflows/test.yml/badge.svg)](https://github.com/iam-skb/Khimy/actions/workflows/test.yml)
+
 Chat chiffre de bout en bout (E2EE) en Rust, base sur le protocole Signal.
 
 ## Ce que c'est
