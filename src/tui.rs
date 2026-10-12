@@ -1,6 +1,7 @@
 //! Interface TUI (Ratatui) pour Khimy — thème rose pastel, connectée au relay.
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -18,6 +19,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
+use serde::{Deserialize, Serialize};
 
 use libsignal_protocol::*;
 
@@ -41,6 +43,8 @@ const MUTED:       Color = Color::Indexed(139);
 const TEXT:        Color = Color::Indexed(255);
 const BG:          Color = Color::Indexed(233);
 
+const MAX_MESSAGES: usize = 500;
+
 const BANNER: &[&str] = &[
     " ██╗  ██╗ ██╗  ██╗ ██╗ ███╗   ███╗ ██╗   ██╗",
     " ██║ ██╔╝ ██║  ██║ ██║ ████╗ ████║ ╚██╗ ██╔╝",
@@ -50,6 +54,7 @@ const BANNER: &[&str] = &[
     " ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝     ╚═╝    ╚═╝   ",
 ];
 
+#[derive(Serialize, Deserialize, Clone)]
 struct Message {
     time: String,
     from: String,
@@ -57,6 +62,7 @@ struct Message {
     kind: MsgKind,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 enum MsgKind {
     System,
     Mine,
@@ -74,26 +80,70 @@ struct App {
     pending_switch: Option<String>,
 }
 
+fn messages_path(pseudo: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let mut p = PathBuf::from(home);
+    p.push(".khimy");
+    p.push(pseudo);
+    p.push("messages.json");
+    p
+}
+
+fn load_messages(pseudo: &str) -> Vec<Message> {
+    let path = messages_path(pseudo);
+    if !path.exists() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+fn save_messages(pseudo: &str, messages: &[Message]) {
+    let path = messages_path(pseudo);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let start = messages.len().saturating_sub(MAX_MESSAGES);
+    let slice = &messages[start..];
+    if let Ok(json) = serde_json::to_string(slice) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn now_short() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+fn welcome_messages() -> Vec<Message> {
+    vec![
+        Message {
+            time: now_short(),
+            from: String::new(),
+            text: "session chiffree — x3dh + double ratchet + ml-kem-1024".to_string(),
+            kind: MsgKind::System,
+        },
+        Message {
+            time: now_short(),
+            from: String::new(),
+            text: "/help pour les commandes, ctrl+c pour quitter".to_string(),
+            kind: MsgKind::System,
+        },
+    ]
+}
+
 impl App {
     fn new(pseudo: String, relay: String, dest: String) -> Self {
+        let mut messages = load_messages(&pseudo);
+        if messages.is_empty() {
+            messages = welcome_messages();
+        }
         Self {
             pseudo,
             relay,
             dest,
-            messages: vec![
-                Message {
-                    time: now_short(),
-                    from: String::new(),
-                    text: "session chiffree — x3dh + double ratchet + ml-kem-1024".to_string(),
-                    kind: MsgKind::System,
-                },
-                Message {
-                    time: now_short(),
-                    from: String::new(),
-                    text: "/help pour les commandes, ctrl+c pour quitter".to_string(),
-                    kind: MsgKind::System,
-                },
-            ],
+            messages,
             input: String::new(),
             should_quit: false,
             pending_switch: None,
@@ -107,11 +157,13 @@ impl App {
             text: text.to_string(),
             kind,
         });
+        save_messages(&self.pseudo, &self.messages);
     }
-}
 
-fn now_short() -> String {
-    chrono::Local::now().format("%H:%M:%S").to_string()
+    fn clear(&mut self) {
+        self.messages.clear();
+        save_messages(&self.pseudo, &self.messages);
+    }
 }
 
 enum UiEvent {
@@ -454,7 +506,8 @@ fn handle_command(app: &mut App, line: &str) -> bool {
             true
         }
         "/clear" => {
-            app.messages.clear();
+            app.clear();
+            app.push(MsgKind::System, "", "historique efface");
             true
         }
         "/help" => {
