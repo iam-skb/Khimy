@@ -24,24 +24,35 @@ impl Client {
         })?;
         send_frame(&mut stream, name.as_bytes())?;
 
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         let frame_result = recv_frame(&mut stream);
         stream.set_read_timeout(None)?;
-        let frame = frame_result?;
 
-        let (kind, _from, payload) = decode_envelope(&frame)?;
-        match kind {
-            KIND_OK => {}
-            KIND_ERROR => {
-                let msg = String::from_utf8_lossy(&payload).to_string();
-                return Err(io::Error::new(io::ErrorKind::Other, msg));
+        match frame_result {
+            Ok(frame) => {
+                let (kind, _from, payload) = decode_envelope(&frame)?;
+                match kind {
+                    KIND_OK => {}
+                    KIND_ERROR => {
+                        let msg = String::from_utf8_lossy(&payload).to_string();
+                        return Err(io::Error::new(io::ErrorKind::Other, msg));
+                    }
+                    other => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("reponse inattendue du relay: 0x{:02x}", other),
+                        ));
+                    }
+                }
             }
-            other => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("reponse inattendue du relay: 0x{:02x}", other),
-                ));
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                // Vieux relay : il ne renvoie pas de KIND_OK.
+                // On continue sans handshake, comme avant.
             }
+            Err(e) => return Err(e),
         }
 
         Ok(Client {
